@@ -106,6 +106,35 @@ interface ValidatedFetchTarget {
   useTls: boolean;
 }
 
+/**
+ * Returns true if `url` targets the same origin as `selfBaseUrl`.
+ * Used to identify plugin self-callbacks to the Paperclip server.
+ */
+function isSelfUrl(url: string, selfBaseUrl: string): boolean {
+  try {
+    const a = new URL(url);
+    const b = new URL(selfBaseUrl);
+    return a.protocol === b.protocol && a.hostname === b.hostname && a.port === b.port;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build a ValidatedFetchTarget for a self-callback URL (plugin → Paperclip server).
+ * Bypasses SSRF validation and routes directly to the loopback address.
+ */
+function buildSelfTarget(url: string): ValidatedFetchTarget {
+  const parsed = new URL(url);
+  return {
+    parsedUrl: parsed,
+    resolvedAddress: "127.0.0.1",
+    hostHeader: parsed.host,
+    tlsServername: undefined,
+    useTls: parsed.protocol === "https:",
+  };
+}
+
 async function validateAndResolveFetchUrl(urlString: string): Promise<ValidatedFetchTarget> {
   let parsed: URL;
   try {
@@ -442,6 +471,7 @@ export function buildHostServices(
   pluginKey: string,
   eventBus: PluginEventBus,
   notifyWorker?: (method: string, params: unknown) => void,
+  selfBaseUrl?: string,
 ): HostServices & { dispose(): void } {
   const registry = pluginRegistryService(db);
   const stateStore = pluginStateStore(db);
@@ -576,7 +606,13 @@ export function buildHostServices(
       async fetch(params) {
         // SSRF protection: validate protocol whitelist + block private IPs.
         // Resolve once, then connect directly to that IP to prevent DNS rebinding.
-        const target = await validateAndResolveFetchUrl(params.url);
+        //
+        // Exception: allow self-callbacks to the Paperclip server (e.g. approval
+        // actions). The plugin worker runs on the same host as the server, so
+        // these calls target localhost which is otherwise blocked by the SSRF check.
+        const target = selfBaseUrl && isSelfUrl(params.url, selfBaseUrl)
+          ? buildSelfTarget(params.url)
+          : await validateAndResolveFetchUrl(params.url);
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), PLUGIN_FETCH_TIMEOUT_MS);
