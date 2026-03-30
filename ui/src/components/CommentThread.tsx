@@ -403,15 +403,6 @@ export function CommentThread({
     <div className="space-y-4">
       <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length})</h3>
 
-      <TimelineList
-        timeline={timeline}
-        agentMap={agentMap}
-        companyId={companyId}
-        projectId={projectId}
-        highlightCommentId={highlightCommentId}
-      />
-
-      {liveRunSlot}
 
       <div className="space-y-2">
         <MarkdownEditor
@@ -497,6 +488,16 @@ export function CommentThread({
           </Button>
         </div>
       </div>
+
+      {liveRunSlot}
+
+      <TimelineList
+        timeline={timeline}
+        agentMap={agentMap}
+        companyId={companyId}
+        projectId={projectId}
+        highlightCommentId={highlightCommentId}
+      />
     </div>
   );
 }
