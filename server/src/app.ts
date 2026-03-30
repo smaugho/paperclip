@@ -1,6 +1,7 @@
 import express, { Router, type Request as ExpressRequest } from "express";
 import path from "node:path";
 import fs from "node:fs";
+import { isUtf8 } from "node:buffer";
 import { fileURLToPath } from "node:url";
 import type { Db } from "@paperclipai/db";
 import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
@@ -82,6 +83,13 @@ export async function createApp(
     // Company import/export payloads can inline full portable packages.
     limit: "10mb",
     verify: (req, _res, buf) => {
+      if (!isUtf8(buf)) {
+        const err = Object.assign(new Error("Request body must be valid UTF-8"), {
+          status: 400,
+          type: "encoding.not.supported",
+        });
+        throw err;
+      }
       (req as unknown as { rawBody: Buffer }).rawBody = buf;
     },
   }));
