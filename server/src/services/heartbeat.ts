@@ -23,7 +23,7 @@ import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
 import { getServerAdapter, runningProcesses } from "../adapters/index.js";
 import type { AdapterExecutionResult, AdapterInvocationMeta, AdapterSessionCodec, UsageSummary } from "../adapters/index.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
-import { parseObject, asBoolean, asNumber, appendWithCap, MAX_EXCERPT_BYTES } from "../adapters/utils.js";
+import { parseObject, asBoolean, asNumber, appendWithCap, MAX_EXCERPT_BYTES, killChildProcess } from "../adapters/utils.js";
 import { costService } from "./costs.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
@@ -3683,11 +3683,11 @@ export function heartbeatService(db: Db) {
 
     const running = runningProcesses.get(run.id);
     if (running) {
-      running.child.kill("SIGTERM");
+      killChildProcess(running.child, "SIGTERM");
       const graceMs = Math.max(1, running.graceSec) * 1000;
       setTimeout(() => {
         if (!running.child.killed) {
-          running.child.kill("SIGKILL");
+          killChildProcess(running.child, "SIGKILL");
         }
       }, graceMs);
     }
@@ -3739,7 +3739,7 @@ export function heartbeatService(db: Db) {
 
       const running = runningProcesses.get(run.id);
       if (running) {
-        running.child.kill("SIGTERM");
+        killChildProcess(running.child, "SIGTERM");
         runningProcesses.delete(run.id);
       }
       await releaseIssueExecutionAndPromote(run);
