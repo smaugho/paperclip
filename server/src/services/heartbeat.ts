@@ -2335,7 +2335,11 @@ export function heartbeatService(db: Db) {
       branchName: executionWorkspace.branchName,
       worktreePath: executionWorkspace.worktreePath,
       agentHome: await (async () => {
-        const home = resolveDefaultAgentWorkspaceDir(agent.id);
+        const managedInstructionsRoot =
+          readNonEmptyString(config.instructionsBundleMode) === "managed"
+            ? readNonEmptyString(config.instructionsRootPath)
+            : null;
+        const home = managedInstructionsRoot || resolveDefaultAgentWorkspaceDir(agent.id);
         await fs.mkdir(home, { recursive: true });
         return home;
       })(),
