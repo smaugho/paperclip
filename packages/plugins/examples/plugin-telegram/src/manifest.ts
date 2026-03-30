@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 export const PLUGIN_ID = "paperclip.telegram";
-const PLUGIN_VERSION = "0.3.0";
+const PLUGIN_VERSION = "0.3.1";
 
 /**
  * Telegram notification plugin manifest.
@@ -57,6 +57,14 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "Watched Issue IDs",
         description:
           "If set, only relay comments from these issue IDs (UUID list). Leave empty to relay all issue comments.",
+        items: { type: "string" },
+        default: [],
+      },
+      watchedActorIds: {
+        type: "array",
+        title: "Watched Actor IDs",
+        description:
+          "If set, only relay comments from these actor IDs (agent or user UUID list). Leave empty to relay from all actors.",
         items: { type: "string" },
         default: [],
       },

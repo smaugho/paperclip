@@ -10,6 +10,7 @@ type TelegramConfig = {
   botTokenSecretRef: string;
   chatIdSecretRef: string;
   watchedIssueIds?: string[];
+  watchedActorIds?: string[];
   messagePrefix?: string;
 };
 
@@ -37,6 +38,9 @@ async function getConfig(ctx: PluginContext): Promise<TelegramConfig | null> {
     chatIdSecretRef: cfg.chatIdSecretRef,
     watchedIssueIds: Array.isArray(cfg.watchedIssueIds)
       ? (cfg.watchedIssueIds as string[])
+      : [],
+    watchedActorIds: Array.isArray(cfg.watchedActorIds)
+      ? (cfg.watchedActorIds as string[])
       : [],
     messagePrefix: typeof cfg.messagePrefix === "string" ? cfg.messagePrefix : "",
   };
@@ -72,13 +76,15 @@ function formatCommentMessage(
   prefix: string
 ): string {
   const identifier = payload.identifier ?? event.entityId ?? "unknown";
+  const title = payload.issueTitle ? ` — ${payload.issueTitle}` : "";
   const snippet = payload.bodySnippet ?? "(no preview)";
   const actor = event.actorType === "agent" ? `Agent` : `User`;
   const actorId = event.actorId ? event.actorId.slice(0, 8) : "?";
 
   const parts: string[] = [];
   if (prefix) parts.push(prefix);
-  parts.push(`💬 <b>[${identifier}]</b> New comment by ${actor} <code>${actorId}</code>`);
+  parts.push(`💬 <b>[${identifier}]</b>${title}`);
+  parts.push(`New comment by ${actor} <code>${actorId}</code>`);
   parts.push(snippet.slice(0, 400));
 
   return parts.join("\n");
@@ -101,6 +107,15 @@ async function handleCommentCreated(
     const issueId = event.entityId ?? "";
     if (!config.watchedIssueIds.includes(issueId)) {
       ctx.logger.debug(`${PLUGIN_ID}: issue ${issueId} not in watch list, skipping`);
+      return;
+    }
+  }
+
+  // Filter by watched actor IDs if configured
+  if (config.watchedActorIds && config.watchedActorIds.length > 0) {
+    const actorId = event.actorId ?? "";
+    if (!config.watchedActorIds.includes(actorId)) {
+      ctx.logger.debug(`${PLUGIN_ID}: actor ${actorId} not in watch list, skipping`);
       return;
     }
   }
