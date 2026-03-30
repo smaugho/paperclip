@@ -97,6 +97,30 @@ When starting a browser session for a task, follow this protocol to establish co
    Open (or reuse) Tab 0 and navigate to `{PAPERCLIP_API_URL}/{company-prefix}/issues/{issue-identifier}` (e.g., `http://127.0.0.1:3100/DSPA/issues/DSPA-42`). This anchors the session to the active task.
 2. **Proceed with task work** in subsequent tabs. Tab 0 stays on the issue page as a persistent reference for the current task context.
 
+## Document Linking in Comments
+
+When referencing any document, file, or resource in a comment (on any platform — Paperclip, Telegram, email, etc.), you MUST include a clickable link. Bare references without links are not permitted.
+
+**Rules by resource type:**
+
+| Resource type | Required link format |
+|---|---|
+| Paperclip issue document (plan, notes, etc.) | `/<PREFIX>/issues/<ISSUE-ID>#document-<key>` |
+| Paperclip issue | `/<PREFIX>/issues/<ISSUE-ID>` |
+| Paperclip approval | `/<PREFIX>/approvals/<approval-id>` |
+| Paperclip agent | `/<PREFIX>/agents/<agent-url-key>` |
+| GitHub / codebase file | Full GitHub URL or repo-relative path that is clickable in context |
+| Google Drive document | Full Google Drive URL |
+| External URL | Full URL |
+
+**Example — correct:**
+> Updated the plan: [DSPA-99#document-plan](/DSPA/issues/DSPA-99#document-plan)
+
+**Example — incorrect (bare reference, no link):**
+> Updated the plan document for DSPA-99.
+
+This rule applies to all agents at all times. No exceptions.
+
 ## Waiting for User Input
 
 When you need the user to take an action (login, MFA, confirm something), use the `wait-for-user` skill. **Never exit your process** if you can poll and wait instead — this keeps browser state alive.
