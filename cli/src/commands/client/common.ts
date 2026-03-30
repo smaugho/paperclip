@@ -208,6 +208,21 @@ function readKeyFromProfileEnv(profile: ClientContextProfile): string | undefine
   return process.env[profile.apiKeyEnvVarName]?.trim() || undefined;
 }
 
+/**
+ * Process C-style escape sequences in CLI text arguments.
+ * Shell commands cannot reliably embed literal newlines in option values,
+ * so agents and scripts pass `\n` / `\t` instead.  Uses a single-pass
+ * regex so that `\\n` correctly produces a literal backslash + "n".
+ */
+export function unescapeText(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value.replace(/\\(n|t|\\)/g, (_, ch: string) => {
+    if (ch === "n") return "\n";
+    if (ch === "t") return "\t";
+    return "\\";
+  });
+}
+
 export function handleCommandError(error: unknown): never {
   if (error instanceof ApiRequestError) {
     const detailSuffix = error.details !== undefined ? ` details=${JSON.stringify(error.details)}` : "";
