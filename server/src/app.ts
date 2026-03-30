@@ -6,6 +6,7 @@ import type { Db } from "@paperclipai/db";
 import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 import type { StorageService } from "./storage/types.js";
 import { httpLogger, errorHandler } from "./middleware/index.js";
+import { verifyUtf8Body } from "./middleware/verify-utf8-body.js";
 import { actorMiddleware } from "./middleware/auth.js";
 import { boardMutationGuard } from "./middleware/board-mutation-guard.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "./middleware/private-hostname-guard.js";
@@ -82,6 +83,7 @@ export async function createApp(
     // Company import/export payloads can inline full portable packages.
     limit: "10mb",
     verify: (req, _res, buf) => {
+      verifyUtf8Body(req, _res, buf);
       (req as unknown as { rawBody: Buffer }).rawBody = buf;
     },
   }));
