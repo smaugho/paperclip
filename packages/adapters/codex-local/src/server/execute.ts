@@ -19,6 +19,7 @@ import {
   resolvePaperclipDesiredSkillNames,
   renderTemplate,
   joinPromptSections,
+  buildWakeContextNotice,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
@@ -466,10 +467,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
+  const wakeContextNotice = buildWakeContextNotice(context);
   const prompt = joinPromptSections([
     instructionsPrefix,
     renderedBootstrapPrompt,
     sessionHandoffNote,
+    wakeContextNotice,
     renderedPrompt,
   ]);
   const promptMetrics = {

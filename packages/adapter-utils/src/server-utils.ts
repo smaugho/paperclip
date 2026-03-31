@@ -193,6 +193,51 @@ export function joinPromptSections(
     .join(separator);
 }
 
+/**
+ * Build a prompt section that alerts the agent to a mention-triggered wake.
+ *
+ * When a heartbeat is triggered by an @-mention in a comment, the run context
+ * carries `wakeCommentId` and `wakeReason`. Agents are expected to fetch and
+ * act on that comment before doing other work, but this relies on the agent
+ * following multi-step skill instructions.  Injecting a clear directive into
+ * the prompt makes the requirement impossible to miss regardless of model or
+ * adapter type.
+ *
+ * Returns an empty string when no wake comment is present.
+ */
+export function buildWakeContextNotice(context: Record<string, unknown>): string {
+  const wakeCommentId =
+    (typeof context.wakeCommentId === "string" && context.wakeCommentId.trim()) ||
+    null;
+  const wakeReason =
+    (typeof context.wakeReason === "string" && context.wakeReason.trim()) ||
+    null;
+  if (!wakeCommentId) return "";
+
+  const taskId =
+    (typeof context.taskId === "string" && context.taskId.trim()) ||
+    (typeof context.issueId === "string" && context.issueId.trim()) ||
+    null;
+
+  const lines = [
+    "IMPORTANT: This heartbeat was triggered by a comment mention" +
+      (wakeReason ? ` (${wakeReason})` : "") +
+      ".",
+  ];
+  if (taskId) {
+    lines.push(
+      `Wake comment: GET /api/issues/${taskId}/comments/${wakeCommentId}`,
+    );
+  } else {
+    lines.push(`Wake comment ID: ${wakeCommentId}`);
+  }
+  lines.push(
+    "You MUST fetch and respond to this comment BEFORE doing any other work in this heartbeat.",
+  );
+
+  return lines.join("\n");
+}
+
 export function redactEnvForLogs(env: Record<string, string>): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
