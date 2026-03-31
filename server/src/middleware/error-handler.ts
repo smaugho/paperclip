@@ -57,6 +57,30 @@ export function errorHandler(
     return;
   }
 
+  // Handle http-errors style errors from Express middleware (body-parser, etc.)
+  // These carry a numeric .status and .expose flag but are not our HttpError.
+  if (
+    err instanceof Error &&
+    typeof (err as any).status === "number" &&
+    (err as any).status >= 400 &&
+    (err as any).status < 600
+  ) {
+    const status = (err as any).status as number;
+    const expose = (err as any).expose === true;
+    if (status >= 500) {
+      attachErrorContext(
+        req,
+        res,
+        { message: err.message, stack: err.stack, name: err.name },
+        err,
+      );
+    }
+    res.status(status).json({
+      error: expose ? err.message : "Internal server error",
+    });
+    return;
+  }
+
   const rootError = err instanceof Error ? err : new Error(String(err));
   attachErrorContext(
     req,
