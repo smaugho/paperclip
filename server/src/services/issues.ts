@@ -591,12 +591,20 @@ export function issueService(db: Db) {
 
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
     const run = await db
-      .select({ status: heartbeatRuns.status })
+      .select({ status: heartbeatRuns.status, startedAt: heartbeatRuns.startedAt, createdAt: heartbeatRuns.createdAt })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
     if (!run) return true;
-    return TERMINAL_HEARTBEAT_RUN_STATUSES.has(run.status);
+    if (TERMINAL_HEARTBEAT_RUN_STATUSES.has(run.status)) return true;
+    // A queued run that never started and is older than 15 minutes is stale.
+    // This handles the case where a server restart or process failure left a
+    // "queued" run that will never be picked up by the original process.
+    if (run.status === "queued" && !run.startedAt) {
+      const ageMs = Date.now() - new Date(run.createdAt).getTime();
+      if (ageMs > 15 * 60 * 1000) return true;
+    }
+    return false;
   }
 
   async function adoptStaleCheckoutRun(input: {
@@ -1313,6 +1321,72 @@ export function issueService(db: Db) {
         const row = await db.select().from(issues).where(eq(issues.id, id)).then((rows) => rows[0]!);
         const [enriched] = await withIssueLabels(db, [row]);
         return enriched;
+      }
+
+      // Handle stale executionRunId on non-in_progress issues (e.g. todo with orphaned queued run).
+      // The initial UPDATE above fails because executionLockCondition rejects a non-matching
+      // executionRunId. If that run is stale (terminal or never-started queued > 15min), clear
+      // the lock and retry the checkout.
+      if (
+        current.executionRunId &&
+        (!checkoutRunId || current.executionRunId !== checkoutRunId) &&
+        expectedStatuses.includes(current.status)
+      ) {
+        const stale = await isTerminalOrMissingHeartbeatRun(current.executionRunId);
+        if (stale) {
+          // Step 1: clear the stale lock atomically
+          await db
+            .update(issues)
+            .set({
+              executionRunId: null,
+              executionAgentNameKey: null,
+              executionLockedAt: null,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(issues.id, id),
+                eq(issues.executionRunId, current.executionRunId),
+                inArray(issues.status, expectedStatuses),
+              ),
+            );
+          // Step 2: retry the full checkout now that the lock is cleared
+          const retryPredicates = [
+            eq(issues.id, id),
+            inArray(issues.status, expectedStatuses),
+            isNull(issues.executionRunId),
+            or(isNull(issues.assigneeAgentId), eq(issues.assigneeAgentId, agentId)),
+          ];
+          if (checkoutRunId) {
+            retryPredicates.push(
+              or(
+                isNull(issues.checkoutRunId),
+                and(
+                  eq(issues.checkoutRunId, checkoutRunId),
+                  eq(issues.assigneeAgentId, agentId),
+                ),
+              ),
+            );
+          }
+          const retried = await db
+            .update(issues)
+            .set({
+              assigneeAgentId: agentId,
+              assigneeUserId: null,
+              checkoutRunId,
+              executionRunId: checkoutRunId,
+              status: "in_progress",
+              startedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(and(...retryPredicates))
+            .returning()
+            .then((rows) => rows[0] ?? null);
+          if (retried) {
+            const [enriched] = await withIssueLabels(db, [retried]);
+            return enriched;
+          }
+        }
       }
 
       throw conflict("Issue checkout conflict", {
