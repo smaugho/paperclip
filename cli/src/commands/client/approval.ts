@@ -13,6 +13,7 @@ import {
   handleCommandError,
   printOutput,
   resolveCommandContext,
+  unescapeText,
   type BaseClientOptions,
 } from "./common.js";
 
@@ -145,7 +146,7 @@ export function registerApprovalCommands(program: Command): void {
         try {
           const ctx = resolveCommandContext(opts);
           const payload = resolveApprovalSchema.parse({
-            decisionNote: opts.decisionNote,
+            decisionNote: unescapeText(opts.decisionNote),
             decidedByUserId: opts.decidedByUserId,
           });
           const updated = await ctx.api.post<Approval>(`/api/approvals/${approvalId}/approve`, payload);
@@ -167,7 +168,7 @@ export function registerApprovalCommands(program: Command): void {
         try {
           const ctx = resolveCommandContext(opts);
           const payload = resolveApprovalSchema.parse({
-            decisionNote: opts.decisionNote,
+            decisionNote: unescapeText(opts.decisionNote),
             decidedByUserId: opts.decidedByUserId,
           });
           const updated = await ctx.api.post<Approval>(`/api/approvals/${approvalId}/reject`, payload);
@@ -189,7 +190,7 @@ export function registerApprovalCommands(program: Command): void {
         try {
           const ctx = resolveCommandContext(opts);
           const payload = requestApprovalRevisionSchema.parse({
-            decisionNote: opts.decisionNote,
+            decisionNote: unescapeText(opts.decisionNote),
             decidedByUserId: opts.decidedByUserId,
           });
           const updated = await ctx.api.post<Approval>(`/api/approvals/${approvalId}/request-revision`, payload);
@@ -230,7 +231,7 @@ export function registerApprovalCommands(program: Command): void {
         try {
           const ctx = resolveCommandContext(opts);
           const created = await ctx.api.post<ApprovalComment>(`/api/approvals/${approvalId}/comments`, {
-            body: opts.body,
+            body: unescapeText(opts.body) ?? opts.body,
           });
           printOutput(created, { json: ctx.json });
         } catch (err) {
