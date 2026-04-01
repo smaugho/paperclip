@@ -571,7 +571,12 @@ export function issueService(db: Db) {
     }
   }
 
-  async function countAgentInProgressIssues(companyId: string, agentId: string, excludeIssueId?: string): Promise<number> {
+  async function countAgentInProgressIssues(
+    companyId: string,
+    agentId: string,
+    excludeIssueId?: string,
+    dbOrTx: any = db,
+  ): Promise<number> {
     const conditions = [
       eq(issues.companyId, companyId),
       eq(issues.assigneeAgentId, agentId),
@@ -580,7 +585,7 @@ export function issueService(db: Db) {
     if (excludeIssueId) {
       conditions.push(ne(issues.id, excludeIssueId));
     }
-    const result = await db
+    const result = await dbOrTx
       .select({ count: sql<number>`count(*)` })
       .from(issues)
       .where(and(...conditions));
@@ -592,9 +597,10 @@ export function issueService(db: Db) {
     agentId: string,
     excludeIssueId: string,
     overrideWipLimit?: boolean,
+    dbOrTx: any = db,
   ): Promise<void> {
     if (overrideWipLimit) return;
-    const currentWip = await countAgentInProgressIssues(companyId, agentId, excludeIssueId);
+    const currentWip = await countAgentInProgressIssues(companyId, agentId, excludeIssueId, dbOrTx);
     if (currentWip >= MAX_WIP_PER_AGENT) {
       throw conflict("Agent has reached the maximum number of in-progress issues", {
         agentId,
@@ -1137,13 +1143,6 @@ export function issueService(db: Db) {
       if (issueData.assigneeUserId) {
         await assertAssignableUser(existing.companyId, issueData.assigneeUserId);
       }
-      if (
-        issueData.status === "in_progress" &&
-        existing.status !== "in_progress" &&
-        nextAssigneeAgentId
-      ) {
-        await assertWipLimit(existing.companyId, nextAssigneeAgentId, id, options?.overrideWipLimit);
-      }
       const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =
         issueData.projectWorkspaceId !== undefined ? issueData.projectWorkspaceId : existing.projectWorkspaceId;
@@ -1173,7 +1172,28 @@ export function issueService(db: Db) {
         patch.checkoutRunId = null;
       }
 
+      // Determine whether this update would increase the target agent's in_progress
+      // count, either via a status transition or an assignee reassignment.
+      const effectiveStatus = issueData.status ?? existing.status;
+      const assigneeChangingToAgent =
+        issueData.assigneeAgentId !== undefined &&
+        issueData.assigneeAgentId !== existing.assigneeAgentId &&
+        issueData.assigneeAgentId !== null;
+      const needsWipGuard =
+        effectiveStatus === "in_progress" &&
+        nextAssigneeAgentId &&
+        (existing.status !== "in_progress" || assigneeChangingToAgent);
+
       return db.transaction(async (tx) => {
+        // WIP guard inside the transaction with advisory lock to close the TOCTOU
+        // window. The lock serializes concurrent mutations for the same target agent.
+        if (needsWipGuard) {
+          if (!options?.overrideWipLimit) {
+            await tx.execute(sql`select pg_advisory_xact_lock(hashtext('wip:' || ${nextAssigneeAgentId}))`);
+          }
+          await assertWipLimit(existing.companyId, nextAssigneeAgentId, id, options?.overrideWipLimit, tx);
+        }
+
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, existing.companyId);
         const [currentProjectGoalId, nextProjectGoalId] = await Promise.all([
           getProjectDefaultGoalId(tx, existing.companyId, existing.projectId),
@@ -1265,41 +1285,48 @@ export function issueService(db: Db) {
       // must not be blocked — the issue already counts toward the agent's WIP.
       const isRecovery =
         issueSnapshot.status === "in_progress" && issueSnapshot.assigneeAgentId === agentId;
-      if (!isRecovery) {
-        await assertWipLimit(issueSnapshot.companyId, agentId, id, options?.overrideWipLimit);
-      }
 
-      const now = new Date();
-      const sameRunAssigneeCondition = checkoutRunId
-        ? and(
-          eq(issues.assigneeAgentId, agentId),
-          or(isNull(issues.checkoutRunId), eq(issues.checkoutRunId, checkoutRunId)),
-        )
-        : and(eq(issues.assigneeAgentId, agentId), isNull(issues.checkoutRunId));
-      const executionLockCondition = checkoutRunId
-        ? or(isNull(issues.executionRunId), eq(issues.executionRunId, checkoutRunId))
-        : isNull(issues.executionRunId);
-      const updated = await db
-        .update(issues)
-        .set({
-          assigneeAgentId: agentId,
-          assigneeUserId: null,
-          checkoutRunId,
-          executionRunId: checkoutRunId,
-          status: "in_progress",
-          startedAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(issues.id, id),
-            inArray(issues.status, expectedStatuses),
-            or(isNull(issues.assigneeAgentId), sameRunAssigneeCondition),
-            executionLockCondition,
-          ),
-        )
-        .returning()
-        .then((rows) => rows[0] ?? null);
+      // Wrap WIP check + primary update in a transaction with an advisory lock so
+      // two concurrent checkouts for the same agent cannot both pass the count and
+      // oversubscribe in_progress (closes the TOCTOU window).
+      const updated = await db.transaction(async (tx) => {
+        if (!isRecovery && !options?.overrideWipLimit) {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext('wip:' || ${agentId}))`);
+          await assertWipLimit(issueSnapshot.companyId, agentId, id, false, tx);
+        }
+
+        const now = new Date();
+        const sameRunAssigneeCondition = checkoutRunId
+          ? and(
+            eq(issues.assigneeAgentId, agentId),
+            or(isNull(issues.checkoutRunId), eq(issues.checkoutRunId, checkoutRunId)),
+          )
+          : and(eq(issues.assigneeAgentId, agentId), isNull(issues.checkoutRunId));
+        const executionLockCondition = checkoutRunId
+          ? or(isNull(issues.executionRunId), eq(issues.executionRunId, checkoutRunId))
+          : isNull(issues.executionRunId);
+        return tx
+          .update(issues)
+          .set({
+            assigneeAgentId: agentId,
+            assigneeUserId: null,
+            checkoutRunId,
+            executionRunId: checkoutRunId,
+            status: "in_progress",
+            startedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(issues.id, id),
+              inArray(issues.status, expectedStatuses),
+              or(isNull(issues.assigneeAgentId), sameRunAssigneeCondition),
+              executionLockCondition,
+            ),
+          )
+          .returning()
+          .then((rows) => rows[0] ?? null);
+      });
 
       if (updated) {
         const [enriched] = await withIssueLabels(db, [updated]);

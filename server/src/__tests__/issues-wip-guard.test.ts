@@ -361,6 +361,150 @@ describeEmbeddedPostgres("issueService WIP guard", () => {
     expect(result!.id).toBe(ownIssueId);
   });
 
+  it("rejects assignee change on in_progress issue when target agent at WIP limit", async () => {
+    const otherAgentId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(agents).values({
+      id: otherAgentId,
+      companyId,
+      name: "TargetAgent",
+      role: "engineer",
+      status: "running",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    // Target agent already has 2 in-progress issues
+    await db.insert(issues).values([
+      {
+        id: randomUUID(),
+        companyId,
+        title: "Target in-progress 1",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: otherAgentId,
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        title: "Target in-progress 2",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: otherAgentId,
+      },
+      {
+        id: issueId,
+        companyId,
+        title: "In-progress to reassign",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+    ]);
+
+    // Reassigning an in_progress issue to an agent at the WIP limit must be rejected
+    await expect(
+      svc.update(issueId, { assigneeAgentId: otherAgentId }),
+    ).rejects.toThrow("Agent has reached the maximum number of in-progress issues");
+  });
+
+  it("allows assignee change on in_progress issue with override", async () => {
+    const otherAgentId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(agents).values({
+      id: otherAgentId,
+      companyId,
+      name: "TargetAgentOverride",
+      role: "engineer",
+      status: "running",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(issues).values([
+      {
+        id: randomUUID(),
+        companyId,
+        title: "Target in-progress 1",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: otherAgentId,
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        title: "Target in-progress 2",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: otherAgentId,
+      },
+      {
+        id: issueId,
+        companyId,
+        title: "In-progress to reassign (override)",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+    ]);
+
+    // Board override allows the reassignment even at WIP limit
+    const result = await svc.update(
+      issueId,
+      { assigneeAgentId: otherAgentId },
+      { overrideWipLimit: true },
+    );
+    expect(result).toBeTruthy();
+    expect(result!.assigneeAgentId).toBe(otherAgentId);
+  });
+
+  it("allows assignee change on in_progress issue when target agent below WIP limit", async () => {
+    const otherAgentId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(agents).values({
+      id: otherAgentId,
+      companyId,
+      name: "TargetAgentUnder",
+      role: "engineer",
+      status: "running",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    // Target agent has only 1 in-progress issue (under the limit)
+    await db.insert(issues).values([
+      {
+        id: randomUUID(),
+        companyId,
+        title: "Target in-progress 1",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: otherAgentId,
+      },
+      {
+        id: issueId,
+        companyId,
+        title: "In-progress to reassign",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+    ]);
+
+    const result = await svc.update(issueId, { assigneeAgentId: otherAgentId });
+    expect(result).toBeTruthy();
+    expect(result!.assigneeAgentId).toBe(otherAgentId);
+  });
+
   it("allows re-checkout of own in_progress issue when agent is above WIP limit (board override history)", async () => {
     const ownIssueId = randomUUID();
     const originalRunId = randomUUID();
