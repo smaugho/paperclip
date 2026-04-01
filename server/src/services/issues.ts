@@ -36,6 +36,7 @@ import { getDefaultCompanyGoal } from "./goals.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
+const MAX_WIP_PER_AGENT = 2;
 
 function assertTransition(from: string, to: string) {
   if (from === to) return;
@@ -570,6 +571,39 @@ export function issueService(db: Db) {
     }
   }
 
+  async function countAgentInProgressIssues(companyId: string, agentId: string, excludeIssueId?: string): Promise<number> {
+    const conditions = [
+      eq(issues.companyId, companyId),
+      eq(issues.assigneeAgentId, agentId),
+      eq(issues.status, "in_progress"),
+    ];
+    if (excludeIssueId) {
+      conditions.push(ne(issues.id, excludeIssueId));
+    }
+    const result = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(issues)
+      .where(and(...conditions));
+    return Number(result[0]?.count ?? 0);
+  }
+
+  async function assertWipLimit(
+    companyId: string,
+    agentId: string,
+    excludeIssueId: string,
+    overrideWipLimit?: boolean,
+  ): Promise<void> {
+    if (overrideWipLimit) return;
+    const currentWip = await countAgentInProgressIssues(companyId, agentId, excludeIssueId);
+    if (currentWip >= MAX_WIP_PER_AGENT) {
+      throw conflict("Agent has reached the maximum number of in-progress issues", {
+        agentId,
+        currentInProgress: currentWip,
+        maxAllowed: MAX_WIP_PER_AGENT,
+      });
+    }
+  }
+
   async function syncIssueLabels(
     issueId: string,
     companyId: string,
@@ -1057,7 +1091,11 @@ export function issueService(db: Db) {
       });
     },
 
-    update: async (id: string, data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] }) => {
+    update: async (
+      id: string,
+      data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] },
+      options?: { overrideWipLimit?: boolean },
+    ) => {
       const existing = await db
         .select()
         .from(issues)
@@ -1098,6 +1136,13 @@ export function issueService(db: Db) {
       }
       if (issueData.assigneeUserId) {
         await assertAssignableUser(existing.companyId, issueData.assigneeUserId);
+      }
+      if (
+        issueData.status === "in_progress" &&
+        existing.status !== "in_progress" &&
+        nextAssigneeAgentId
+      ) {
+        await assertWipLimit(existing.companyId, nextAssigneeAgentId, id, options?.overrideWipLimit);
       }
       const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =
@@ -1196,7 +1241,13 @@ export function issueService(db: Db) {
         return enriched;
       }),
 
-    checkout: async (id: string, agentId: string, expectedStatuses: string[], checkoutRunId: string | null) => {
+    checkout: async (
+      id: string,
+      agentId: string,
+      expectedStatuses: string[],
+      checkoutRunId: string | null,
+      options?: { overrideWipLimit?: boolean },
+    ) => {
       const issueCompany = await db
         .select({ companyId: issues.companyId })
         .from(issues)
@@ -1204,6 +1255,7 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!issueCompany) throw notFound("Issue not found");
       await assertAssignableAgent(issueCompany.companyId, agentId);
+      await assertWipLimit(issueCompany.companyId, agentId, id, options?.overrideWipLimit);
 
       const now = new Date();
       const sameRunAssigneeCondition = checkoutRunId

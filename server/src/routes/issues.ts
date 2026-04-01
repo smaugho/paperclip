@@ -1077,7 +1077,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
     let issue;
     try {
-      issue = await svc.update(id, updateFields);
+      issue = await svc.update(id, updateFields, {
+        overrideWipLimit: req.actor.type === "board",
+      });
     } catch (err) {
       if (err instanceof HttpError && err.status === 422) {
         logger.warn(
@@ -1335,7 +1337,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     const checkoutRunId = requireAgentRunId(req, res);
     if (req.actor.type === "agent" && !checkoutRunId) return;
-    const updated = await svc.checkout(id, req.body.agentId, req.body.expectedStatuses, checkoutRunId);
+    const updated = await svc.checkout(id, req.body.agentId, req.body.expectedStatuses, checkoutRunId, {
+      overrideWipLimit: req.actor.type === "board",
+    });
     const actor = getActorInfo(req);
 
     await logActivity(db, {
