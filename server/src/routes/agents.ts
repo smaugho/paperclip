@@ -997,6 +997,7 @@ export function agentRoutes(db: Db) {
         identifier: issue.identifier,
         title: issue.title,
         status: issue.status,
+        blockedOn: issue.blockedOn,
         priority: issue.priority,
         projectId: issue.projectId,
         goalId: issue.goalId,

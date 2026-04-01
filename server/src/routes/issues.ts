@@ -432,6 +432,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
         title: issue.title,
         description: issue.description,
         status: issue.status,
+        blockedOn: issue.blockedOn,
         priority: issue.priority,
         projectId: issue.projectId,
         goalId: goal?.id ?? issue.goalId,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
+import { BLOCKED_ON_KINDS, ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
 
 const executionWorkspaceStrategySchema = z
   .object({
@@ -52,6 +52,7 @@ export const createIssueSchema = z.object({
     "agent_default",
   ]).optional().nullable(),
   executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),
+  blockedOn: z.enum(BLOCKED_ON_KINDS).optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
 });
 

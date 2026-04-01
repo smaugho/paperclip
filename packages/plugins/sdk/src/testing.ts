@@ -359,6 +359,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           title: input.title,
           description: input.description ?? null,
           status: "todo",
+          blockedOn: null,
           priority: input.priority ?? "medium",
           assigneeAgentId: input.assigneeAgentId ?? null,
           assigneeUserId: null,
