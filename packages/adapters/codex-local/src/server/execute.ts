@@ -19,6 +19,7 @@ import {
   resolvePaperclipDesiredSkillNames,
   renderTemplate,
   joinPromptSections,
+  buildWakeContextBlock,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
@@ -466,11 +467,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
+  const wakeContextBlock = buildWakeContextBlock({
+    taskId: wakeTaskId,
+    wakeReason,
+    wakeCommentId: wakeCommentId,
+  });
   const prompt = joinPromptSections([
     instructionsPrefix,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,
+    wakeContextBlock,
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
@@ -478,6 +485,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
+    wakeContextChars: wakeContextBlock.length,
   };
 
   const buildArgs = (resumeSessionId: string | null) => {

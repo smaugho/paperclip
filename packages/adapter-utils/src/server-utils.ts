@@ -193,6 +193,26 @@ export function joinPromptSections(
     .join(separator);
 }
 
+export interface WakeContextFields {
+  taskId?: string | null;
+  wakeReason?: string | null;
+  wakeCommentId?: string | null;
+}
+
+/**
+ * Builds a concise wake-context block for inclusion in adapter prompts.
+ * Returns an empty string when no wake-context fields are present,
+ * so agents see nothing extra on timer/scheduler heartbeats.
+ */
+export function buildWakeContextBlock(fields: WakeContextFields): string {
+  const lines: string[] = [];
+  if (fields.taskId) lines.push(`task_id: ${fields.taskId}`);
+  if (fields.wakeReason) lines.push(`wake_reason: ${fields.wakeReason}`);
+  if (fields.wakeCommentId) lines.push(`wake_comment_id: ${fields.wakeCommentId}`);
+  if (lines.length === 0) return "";
+  return `[Paperclip wake context]\n${lines.join("\n")}`;
+}
+
 export function redactEnvForLogs(env: Record<string, string>): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
