@@ -948,6 +948,7 @@ export function issueService(db: Db) {
     create: async (
       companyId: string,
       data: IssueCreateInput,
+      options?: { overrideWipLimit?: boolean },
     ) => {
       const { labelIds: inputLabelIds, inheritExecutionWorkspaceFromIssueId, ...issueData } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
@@ -969,6 +970,19 @@ export function issueService(db: Db) {
         throw unprocessable("in_progress issues require an assignee");
       }
       return db.transaction(async (tx) => {
+        // WIP guard: reject create with status in_progress + agent assignee when at limit
+        if (data.status === "in_progress" && data.assigneeAgentId && !options?.overrideWipLimit) {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext('wip:' || ${data.assigneeAgentId}))`);
+          const currentWip = await countAgentInProgressIssues(companyId, data.assigneeAgentId, undefined, tx);
+          if (currentWip >= MAX_WIP_PER_AGENT) {
+            throw conflict("Agent has reached the maximum number of in-progress issues", {
+              agentId: data.assigneeAgentId,
+              currentInProgress: currentWip,
+              maxAllowed: MAX_WIP_PER_AGENT,
+            });
+          }
+        }
+
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, companyId);
         const projectGoalId = await getProjectDefaultGoalId(tx, companyId, issueData.projectId);
         let projectWorkspaceId = issueData.projectWorkspaceId ?? null;

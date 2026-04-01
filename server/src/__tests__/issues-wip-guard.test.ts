@@ -551,4 +551,126 @@ describeEmbeddedPostgres("issueService WIP guard", () => {
     expect(result!.status).toBe("in_progress");
     expect(result!.id).toBe(ownIssueId);
   });
+
+  // --- Create-path WIP guard tests ---
+
+  it("allows create with in_progress + agent when agent is under WIP limit", async () => {
+    // Agent has 1 in-progress issue (under the limit of 2)
+    await db.insert(issues).values({
+      id: randomUUID(),
+      companyId,
+      title: "In-progress 1",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+    });
+
+    const result = await svc.create(companyId, {
+      title: "New in-progress via create",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+    });
+    expect(result).toBeTruthy();
+    expect(result.status).toBe("in_progress");
+    expect(result.assigneeAgentId).toBe(agentId);
+  });
+
+  it("rejects create with in_progress + agent when agent at WIP limit", async () => {
+    // Agent already has 2 in-progress issues
+    await db.insert(issues).values([
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 1",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 2",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+    ]);
+
+    await expect(
+      svc.create(companyId, {
+        title: "Third in-progress via create",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      }),
+    ).rejects.toThrow("Agent has reached the maximum number of in-progress issues");
+  });
+
+  it("allows create with in_progress + agent at WIP limit when override is set", async () => {
+    // Agent already has 2 in-progress issues
+    await db.insert(issues).values([
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 1",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 2",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+    ]);
+
+    const result = await svc.create(
+      companyId,
+      {
+        title: "Override create in-progress",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      { overrideWipLimit: true },
+    );
+    expect(result).toBeTruthy();
+    expect(result.status).toBe("in_progress");
+  });
+
+  it("does not trigger WIP guard on create with non-in_progress status", async () => {
+    // Agent at WIP limit
+    await db.insert(issues).values([
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 1",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 2",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+    ]);
+
+    // Creating a todo issue assigned to the agent should always succeed
+    const result = await svc.create(companyId, {
+      title: "New todo for agent at limit",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: agentId,
+    });
+    expect(result).toBeTruthy();
+    expect(result.status).toBe("todo");
+  });
 });
