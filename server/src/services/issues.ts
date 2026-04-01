@@ -1248,14 +1248,26 @@ export function issueService(db: Db) {
       checkoutRunId: string | null,
       options?: { overrideWipLimit?: boolean },
     ) => {
-      const issueCompany = await db
-        .select({ companyId: issues.companyId })
+      const issueSnapshot = await db
+        .select({
+          companyId: issues.companyId,
+          status: issues.status,
+          assigneeAgentId: issues.assigneeAgentId,
+        })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
-      if (!issueCompany) throw notFound("Issue not found");
-      await assertAssignableAgent(issueCompany.companyId, agentId);
-      await assertWipLimit(issueCompany.companyId, agentId, id, options?.overrideWipLimit);
+      if (!issueSnapshot) throw notFound("Issue not found");
+      await assertAssignableAgent(issueSnapshot.companyId, agentId);
+
+      // Only enforce WIP limit for fresh checkouts (new transitions to in_progress).
+      // Recovery/re-checkout of an already-in_progress issue owned by this agent
+      // must not be blocked — the issue already counts toward the agent's WIP.
+      const isRecovery =
+        issueSnapshot.status === "in_progress" && issueSnapshot.assigneeAgentId === agentId;
+      if (!isRecovery) {
+        await assertWipLimit(issueSnapshot.companyId, agentId, id, options?.overrideWipLimit);
+      }
 
       const now = new Date();
       const sameRunAssigneeCondition = checkoutRunId

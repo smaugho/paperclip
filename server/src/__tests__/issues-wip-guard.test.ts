@@ -319,4 +319,92 @@ describeEmbeddedPostgres("issueService WIP guard", () => {
     expect(result).toBeTruthy();
     expect(result!.status).toBe("in_progress");
   });
+
+  it("allows re-checkout of own in_progress issue when agent is at or above WIP limit", async () => {
+    const ownIssueId = randomUUID();
+    const originalRunId = randomUUID();
+    const newRunId = randomUUID();
+
+    // Agent has 2 in-progress issues — already at the WIP limit
+    await db.insert(issues).values([
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 1",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      {
+        id: ownIssueId,
+        companyId,
+        title: "In-progress 2 (re-checkout target)",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        checkoutRunId: originalRunId,
+        executionRunId: originalRunId,
+      },
+    ]);
+
+    // Re-checking out an already-in_progress issue owned by this agent must succeed
+    // even though the agent is at the WIP limit, because the issue already counts
+    // toward the agent's WIP — this is recovery, not a new WIP transition
+    const result = await svc.checkout(
+      ownIssueId,
+      agentId,
+      ["todo", "in_progress"],
+      newRunId,
+    );
+    expect(result).toBeTruthy();
+    expect(result!.status).toBe("in_progress");
+    expect(result!.id).toBe(ownIssueId);
+  });
+
+  it("allows re-checkout of own in_progress issue when agent is above WIP limit (board override history)", async () => {
+    const ownIssueId = randomUUID();
+    const originalRunId = randomUUID();
+    const newRunId = randomUUID();
+
+    // Agent has 3 in-progress issues — above the WIP limit (e.g. from board overrides)
+    await db.insert(issues).values([
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 1",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      {
+        id: randomUUID(),
+        companyId,
+        title: "In-progress 2",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      {
+        id: ownIssueId,
+        companyId,
+        title: "In-progress 3 (re-checkout target)",
+        status: "in_progress",
+        priority: "medium",
+        assigneeAgentId: agentId,
+        checkoutRunId: originalRunId,
+        executionRunId: originalRunId,
+      },
+    ]);
+
+    // Even above the limit, re-checkout of own in_progress issue must not be blocked
+    const result = await svc.checkout(
+      ownIssueId,
+      agentId,
+      ["todo", "in_progress"],
+      newRunId,
+    );
+    expect(result).toBeTruthy();
+    expect(result!.status).toBe("in_progress");
+    expect(result!.id).toBe(ownIssueId);
+  });
 });
