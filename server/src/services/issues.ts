@@ -1049,9 +1049,30 @@ export function issueService(db: Db) {
         }
 
         const [issue] = await tx.insert(issues).values(values).returning();
-        if (inputLabelIds) {
-          await syncIssueLabels(issue.id, companyId, inputLabelIds, tx);
+
+        // Auto-apply "From Board" label for board-authored issues
+        let finalLabelIds = inputLabelIds ? [...inputLabelIds] : [];
+        if (issueData.createdByUserId) {
+          const fromBoardLabelName = "From Board";
+          let fromBoardLabel = await tx
+            .select({ id: labels.id })
+            .from(labels)
+            .where(and(eq(labels.companyId, companyId), eq(labels.name, fromBoardLabelName)))
+            .then((rows) => rows[0] ?? null);
+          if (!fromBoardLabel) {
+            [fromBoardLabel] = await tx
+              .insert(labels)
+              .values({ companyId, name: fromBoardLabelName, color: "#0ea5e9" })
+              .returning({ id: labels.id });
+          }
+          if (!finalLabelIds.includes(fromBoardLabel.id)) {
+            finalLabelIds.push(fromBoardLabel.id);
+          }
         }
+        if (finalLabelIds.length > 0) {
+          await syncIssueLabels(issue.id, companyId, finalLabelIds, tx);
+        }
+
         const [enriched] = await withIssueLabels(tx, [issue]);
         return enriched;
       });
