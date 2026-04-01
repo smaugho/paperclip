@@ -13,6 +13,7 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
+  boardSourcesService,
   budgetService,
   companyPortabilityService,
   companyService,
@@ -28,6 +29,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   const portability = companyPortabilityService(db, storage);
   const access = accessService(db);
   const budgets = budgetService(db);
+  const boardSources = boardSourcesService(db);
 
   async function assertCanUpdateBranding(req: Request, companyId: string) {
     assertCompanyAccess(req, companyId);
@@ -102,6 +104,15 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       return;
     }
     res.json(company);
+  });
+
+  router.get("/:companyId/board-authored-sources", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const parsed = parseInt(req.query.windowHours as string);
+    const windowHours = Math.max(1, Math.min(720, Number.isNaN(parsed) ? 24 : parsed));
+    const result = await boardSources.list(companyId, windowHours);
+    res.json(result);
   });
 
   router.post("/:companyId/export", validate(companyPortabilityExportSchema), async (req, res) => {
