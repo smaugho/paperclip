@@ -589,6 +589,65 @@ export function issueService(db: Db) {
     );
   }
 
+  /**
+   * Idempotently attach the "Board Comments" label to an issue when a
+   * board/user-authored comment is added.
+   *
+   * Rules:
+   * - If the issue already carries a "From Board" label → skip (that label is
+   *   stronger and implies the whole issue was board-created).
+   * - If the "Board Comments" label is already on the issue → no-op.
+   * - Otherwise, find-or-create the "Board Comments" label for the company and
+   *   attach it.
+   */
+  async function ensureBoardCommentLabel(issueId: string, companyId: string): Promise<void> {
+    // Fetch current labels for the issue
+    const currentLabels = await db
+      .select({ labelId: issueLabels.labelId, labelName: labels.name })
+      .from(issueLabels)
+      .innerJoin(labels, eq(issueLabels.labelId, labels.id))
+      .where(eq(issueLabels.issueId, issueId));
+
+    // If issue already has "From Board", skip
+    if (currentLabels.some((l) => l.labelName === "From Board")) return;
+
+    // If issue already has "Board Comments", skip
+    if (currentLabels.some((l) => l.labelName === "Board Comments")) return;
+
+    // Find or create the "Board Comments" label for this company
+    let label = await db
+      .select({ id: labels.id })
+      .from(labels)
+      .where(and(eq(labels.companyId, companyId), eq(labels.name, "Board Comments")))
+      .then((rows) => rows[0] ?? null);
+
+    if (!label) {
+      const [created] = await db
+        .insert(labels)
+        .values({ companyId, name: "Board Comments", color: "#6366f1" })
+        .onConflictDoNothing()
+        .returning();
+      if (created) {
+        label = created;
+      } else {
+        // Race: another writer created it between our SELECT and INSERT
+        label = await db
+          .select({ id: labels.id })
+          .from(labels)
+          .where(and(eq(labels.companyId, companyId), eq(labels.name, "Board Comments")))
+          .then((rows) => rows[0] ?? null);
+      }
+    }
+
+    if (!label) return; // Defensive — should not happen
+
+    // Attach the label idempotently
+    await db
+      .insert(issueLabels)
+      .values({ issueId, labelId: label.id, companyId })
+      .onConflictDoNothing();
+  }
+
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
     const run = await db
       .select({ status: heartbeatRuns.status })
@@ -1616,6 +1675,12 @@ export function issueService(db: Db) {
         .update(issues)
         .set({ updatedAt: new Date() })
         .where(eq(issues.id, issueId));
+
+      // Auto-label "Board Comments" when a board/user authors a comment
+      const isBoardComment = Boolean(actor.userId) && !actor.agentId;
+      if (isBoardComment) {
+        await ensureBoardCommentLabel(issueId, issue.companyId);
+      }
 
       return redactIssueComment(comment, currentUserRedactionOptions.enabled);
     },
