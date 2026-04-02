@@ -71,12 +71,16 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
           return;
         }
       }
-      // When no bearer token is present, try to derive agent identity from the
-      // run-ID header.  This fixes the audit-trail bug where agents making API
-      // calls without an explicit Authorization header (e.g. plain curl inside a
-      // heartbeat when JWT secret is not configured) appear as the board actor
-      // rather than the originating agent.
-      if (runIdHeader) {
+      // When no bearer token is present in local_trusted mode, try to derive
+      // agent identity from the run-ID header.  This fixes the audit-trail bug
+      // where agents making API calls without an explicit Authorization header
+      // (e.g. plain curl inside a heartbeat when JWT secret is not configured)
+      // appear as the board actor rather than the originating agent.
+      //
+      // IMPORTANT: This block MUST only run in local_trusted mode.  In
+      // authenticated mode a valid run-ID alone must not grant agent-level
+      // access — that would bypass authentication entirely.
+      if (runIdHeader && opts.deploymentMode === "local_trusted") {
         const run = await db
           .select({
             agentId: heartbeatRuns.agentId,
@@ -95,6 +99,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
 
           if (
             agentRecord &&
+            agentRecord.companyId === run.companyId &&
             agentRecord.status !== "terminated" &&
             agentRecord.status !== "pending_approval"
           ) {

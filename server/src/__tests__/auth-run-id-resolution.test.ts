@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import type { Db } from "@paperclipai/db";
@@ -15,41 +15,13 @@ vi.mock("../services/board-auth.js", () => ({
 
 const AGENT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const COMPANY_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+const OTHER_COMPANY_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const RUN_ID = "rrrrrrrr-rrrr-rrrr-rrrr-rrrrrrrrrrrr";
 
 /**
- * Build a mock Db that returns specific rows for heartbeat_runs and agents table lookups.
- */
-function mockDb(opts: {
-  run?: { agentId: string; companyId: string } | null;
-  agent?: { id: string; companyId: string; status: string } | null;
-}): Db {
-  // Track the chain: select → from(table) → where → then(rows)
-  return {
-    select: vi.fn().mockReturnValue({
-      from: vi.fn().mockImplementation((table: { _: { name: string } }) => {
-        const tableName = table?._ ?.name ?? table?.[Symbol.for("drizzle:Name")] ?? "";
-        return {
-          where: vi.fn().mockImplementation(() => {
-            // Determine which table is being queried based on call context
-            // The mock is called sequentially: first heartbeatRuns, then agents
-            return {
-              then: vi.fn().mockImplementation((fn: (rows: unknown[]) => unknown) => {
-                // We can't easily distinguish tables in a chain mock,
-                // so we use a counter approach
-                return Promise.resolve([]);
-              }),
-            };
-          }),
-        };
-      }),
-    }),
-  } as unknown as Db;
-}
-
-/**
- * More refined mock that distinguishes heartbeatRuns vs agents queries
- * by tracking the call sequence.
+ * Build a mock Db that returns specific rows for heartbeat_runs and agents
+ * table lookups.  Uses a query counter to distinguish sequential select calls
+ * (first = heartbeatRuns, second = agents).
  */
 function createMockDb(opts: {
   run?: { agentId: string; companyId: string } | null;
@@ -73,10 +45,10 @@ function createMockDb(opts: {
   return { select: selectFn } as unknown as Db;
 }
 
-function createApp(db: Db) {
+function createApp(db: Db, deploymentMode: "local_trusted" | "authenticated" = "local_trusted") {
   const app = express();
   app.use(express.json());
-  app.use(actorMiddleware(db, { deploymentMode: "local_trusted" }));
+  app.use(actorMiddleware(db, { deploymentMode }));
   app.get("/test", (req, res) => {
     res.json({
       actorType: req.actor.type,
@@ -150,5 +122,39 @@ describe("auth middleware: run-ID agent resolution in local_trusted mode", () =>
     expect(res.body.userId).toBe("local-board");
     expect(res.body.runId).toBeNull();
     expect(res.body.source).toBe("local_implicit");
+  });
+
+  it("falls back to board when agent companyId does not match run companyId", async () => {
+    const db = createMockDb({
+      run: { agentId: AGENT_ID, companyId: COMPANY_ID },
+      agent: { id: AGENT_ID, companyId: OTHER_COMPANY_ID, status: "running" },
+    });
+
+    const app = createApp(db);
+    const res = await request(app)
+      .get("/test")
+      .set("x-paperclip-run-id", RUN_ID);
+
+    expect(res.body.actorType).toBe("board");
+    expect(res.body.userId).toBe("local-board");
+    expect(res.body.runId).toBe(RUN_ID);
+  });
+
+  it("does not resolve run-ID to agent identity in authenticated mode", async () => {
+    const db = createMockDb({
+      run: { agentId: AGENT_ID, companyId: COMPANY_ID },
+      agent: { id: AGENT_ID, companyId: COMPANY_ID, status: "running" },
+    });
+
+    const app = createApp(db, "authenticated");
+    const res = await request(app)
+      .get("/test")
+      .set("x-paperclip-run-id", RUN_ID);
+
+    // In authenticated mode without a bearer token or valid session,
+    // the actor must remain { type: "none" } — never agent.
+    expect(res.body.actorType).toBe("none");
+    expect(res.body.agentId).toBeNull();
+    expect(res.body.source).toBe("none");
   });
 });
