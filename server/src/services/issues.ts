@@ -36,6 +36,8 @@ import { getDefaultCompanyGoal } from "./goals.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
+const NEED_BOARD_LABEL_NAME = "Need Board";
+const NEED_BOARD_LABEL_COLOR = "#EF4444";
 
 function assertTransition(from: string, to: string) {
   if (from === to) return;
@@ -648,6 +650,63 @@ export function issueService(db: Db) {
       .onConflictDoNothing();
   }
 
+  async function getOrCreateNeedBoardLabel(companyId: string, dbOrTx: any = db) {
+    const [existing] = await dbOrTx
+      .select()
+      .from(labels)
+      .where(and(eq(labels.companyId, companyId), eq(labels.name, NEED_BOARD_LABEL_NAME)));
+    if (existing) return existing;
+    const [created] = await dbOrTx
+      .insert(labels)
+      .values({ companyId, name: NEED_BOARD_LABEL_NAME, color: NEED_BOARD_LABEL_COLOR })
+      .onConflictDoNothing()
+      .returning();
+    if (created) return created;
+    const [fallback] = await dbOrTx
+      .select()
+      .from(labels)
+      .where(and(eq(labels.companyId, companyId), eq(labels.name, NEED_BOARD_LABEL_NAME)));
+    return fallback;
+  }
+
+  async function ensureNeedBoardLabel(issueId: string, companyId: string, dbOrTx: any = db) {
+    const label = await getOrCreateNeedBoardLabel(companyId, dbOrTx);
+    if (!label) return;
+    const [existing] = await dbOrTx
+      .select()
+      .from(issueLabels)
+      .where(and(eq(issueLabels.issueId, issueId), eq(issueLabels.labelId, label.id)));
+    if (existing) return;
+    await dbOrTx
+      .insert(issueLabels)
+      .values({ issueId, labelId: label.id, companyId })
+      .onConflictDoNothing();
+  }
+
+  async function removeNeedBoardLabel(issueId: string, companyId: string, dbOrTx: any = db) {
+    const [label] = await dbOrTx
+      .select({ id: labels.id })
+      .from(labels)
+      .where(and(eq(labels.companyId, companyId), eq(labels.name, NEED_BOARD_LABEL_NAME)));
+    if (!label) return;
+    await dbOrTx
+      .delete(issueLabels)
+      .where(and(eq(issueLabels.issueId, issueId), eq(issueLabels.labelId, label.id)));
+  }
+
+  async function syncNeedBoardLabel(
+    issueId: string,
+    companyId: string,
+    isBoardBlocked: boolean,
+    dbOrTx: any = db,
+  ) {
+    if (isBoardBlocked) {
+      await ensureNeedBoardLabel(issueId, companyId, dbOrTx);
+    } else {
+      await removeNeedBoardLabel(issueId, companyId, dbOrTx);
+    }
+  }
+
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
     const run = await db
       .select({ status: heartbeatRuns.status })
@@ -1131,7 +1190,10 @@ export function issueService(db: Db) {
         if (finalLabelIds.length > 0) {
           await syncIssueLabels(issue.id, companyId, finalLabelIds, tx);
         }
-
+        // Auto-manage "Need Board" label on creation
+        if (issue.status === "blocked" && issue.blockedOn === "board") {
+          await ensureNeedBoardLabel(issue.id, companyId, tx);
+        }
         const [enriched] = await withIssueLabels(tx, [issue]);
         return enriched;
       });
@@ -1208,6 +1270,12 @@ export function issueService(db: Db) {
         patch.checkoutRunId = null;
       }
 
+      // Clear blockedOn when status transitions away from "blocked"
+      const nextStatus = issueData.status ?? existing.status;
+      if (nextStatus !== "blocked" && existing.blockedOn) {
+        patch.blockedOn = null;
+      }
+
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, existing.companyId);
         const [currentProjectGoalId, nextProjectGoalId] = await Promise.all([
@@ -1237,6 +1305,9 @@ export function issueService(db: Db) {
         if (nextLabelIds !== undefined) {
           await syncIssueLabels(updated.id, existing.companyId, nextLabelIds, tx);
         }
+        // Auto-manage "Need Board" label based on blocked_on state
+        const finalBlockedOn = updated.blockedOn;
+        await syncNeedBoardLabel(updated.id, existing.companyId, finalBlockedOn === "board", tx);
         const [enriched] = await withIssueLabels(tx, [updated]);
         return enriched;
       });
@@ -1303,6 +1374,7 @@ export function issueService(db: Db) {
           checkoutRunId,
           executionRunId: checkoutRunId,
           status: "in_progress",
+          blockedOn: null,
           startedAt: now,
           updatedAt: now,
         })
@@ -1318,6 +1390,7 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
 
       if (updated) {
+        await removeNeedBoardLabel(updated.id, issueCompany.companyId);
         const [enriched] = await withIssueLabels(db, [updated]);
         return enriched;
       }

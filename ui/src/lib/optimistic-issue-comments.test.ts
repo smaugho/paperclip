@@ -136,6 +136,7 @@ describe("optimistic issue comments", () => {
         title: "Fix comment flow",
         description: null,
         status: "done",
+        blockedOn: null,
         priority: "medium",
         assigneeAgentId: "agent-1",
         assigneeUserId: null,

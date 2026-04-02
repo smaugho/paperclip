@@ -1,4 +1,4 @@
-import type { IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
+import type { BlockedOnKind, IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
 import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
@@ -107,6 +107,7 @@ export interface Issue {
   title: string;
   description: string | null;
   status: IssueStatus;
+  blockedOn: BlockedOnKind | null;
   priority: IssuePriority;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;

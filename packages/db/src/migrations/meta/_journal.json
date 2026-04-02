@@ -337,6 +337,13 @@
       "when": 1775080637149,
       "tag": "0047_bent_jackpot",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1775174057426,
+      "tag": "0048_brief_morlun",
+      "breakpoints": true
     }
   ]
 }
