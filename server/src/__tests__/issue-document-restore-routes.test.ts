@@ -37,6 +37,13 @@ vi.mock("../services/index.js", () => ({
     wakeup: vi.fn(async () => undefined),
     reportRunActivity: vi.fn(async () => undefined),
   }),
+  instanceSettingsService: () => ({
+    getExperimental: vi.fn(async () => ({
+      enableIsolatedWorkspaces: false,
+      autoRestartDevServerWhenIdle: false,
+      enableWorkProducts: false,
+    })),
+  }),
   issueApprovalService: () => ({}),
   issueDependencyService: () => ({
     addDependency: vi.fn(),

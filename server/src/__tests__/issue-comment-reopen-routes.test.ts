@@ -37,6 +37,13 @@ vi.mock("../services/index.js", () => ({
   executionWorkspaceService: () => ({}),
   goalService: () => ({}),
   heartbeatService: () => mockHeartbeatService,
+  instanceSettingsService: () => ({
+    getExperimental: vi.fn(async () => ({
+      enableIsolatedWorkspaces: false,
+      autoRestartDevServerWhenIdle: false,
+      enableWorkProducts: false,
+    })),
+  }),
   issueApprovalService: () => ({}),
   issueDependencyService: () => ({
     addDependency: vi.fn(),
