@@ -174,7 +174,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
         details: {
           previousCheckoutRunId: ownership.adoptedFromRunId,
           checkoutRunId: runId,
-          reason: "stale_checkout_run",
+          reason: ownership.adoptionReason ?? "stale_checkout_run",
         },
       });
     }

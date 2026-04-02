@@ -7,6 +7,7 @@ import {
   companies,
   createDb,
   executionWorkspaces,
+  heartbeatRuns,
   instanceSettings,
   issueComments,
   issueInboxArchives,
@@ -950,5 +951,179 @@ describeEmbeddedPostgres("issueService.addComment Board Comments auto-label", ()
     const issueLabelNames = await getIssueLabels(issue.id);
     const names = issueLabelNames.map((l) => l.labelName).sort();
     expect(names).toEqual(["Board Comments", "Bug"]);
+  });
+});
+
+describeEmbeddedPostgres("issueService.assertCheckoutOwner sibling-run adoption", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-checkout-owner-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(heartbeatRuns);
+    await db.delete(issueComments);
+    await db.delete(issueInboxArchives);
+    await db.delete(activityLog);
+    await db.delete(issues);
+    await db.delete(agents);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  async function seedCompanyAndAgent() {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "TestAgent",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    return { companyId, agentId };
+  }
+
+  it("adopts checkout from a same-agent sibling run not executing this issue", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const issueId = randomUUID();
+    const oldRunId = randomUUID();
+    const newRunId = randomUUID();
+
+    await db.insert(heartbeatRuns).values({
+      id: oldRunId,
+      companyId,
+      agentId,
+      status: "running",
+      contextSnapshot: { issueId: randomUUID() },
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Test issue",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: oldRunId,
+      executionRunId: oldRunId,
+    });
+
+    const result = await svc.assertCheckoutOwner(issueId, agentId, newRunId);
+
+    expect(result.adoptedFromRunId).toBe(oldRunId);
+    expect(result.adoptionReason).toBe("same_agent_sibling_not_on_issue");
+    expect(result.checkoutRunId).toBe(newRunId);
+  });
+
+  it("rejects adoption from a same-agent sibling run actively executing this issue", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const issueId = randomUUID();
+    const oldRunId = randomUUID();
+    const newRunId = randomUUID();
+
+    await db.insert(heartbeatRuns).values({
+      id: oldRunId,
+      companyId,
+      agentId,
+      status: "running",
+      contextSnapshot: { issueId },
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Test issue",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: oldRunId,
+      executionRunId: oldRunId,
+    });
+
+    await expect(svc.assertCheckoutOwner(issueId, agentId, newRunId)).rejects.toThrow(
+      "Issue run ownership conflict",
+    );
+  });
+
+  it("adopts checkout from a stale terminal run", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const issueId = randomUUID();
+    const oldRunId = randomUUID();
+    const newRunId = randomUUID();
+
+    await db.insert(heartbeatRuns).values({
+      id: oldRunId,
+      companyId,
+      agentId,
+      status: "succeeded",
+      contextSnapshot: { issueId },
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Test issue",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: oldRunId,
+      executionRunId: oldRunId,
+    });
+
+    const result = await svc.assertCheckoutOwner(issueId, agentId, newRunId);
+
+    expect(result.adoptedFromRunId).toBe(oldRunId);
+    expect(result.adoptionReason).toBe("stale_checkout_run");
+    expect(result.checkoutRunId).toBe(newRunId);
+  });
+
+  it("adopts checkout from a queued sibling run with no context snapshot", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const issueId = randomUUID();
+    const oldRunId = randomUUID();
+    const newRunId = randomUUID();
+
+    await db.insert(heartbeatRuns).values({
+      id: oldRunId,
+      companyId,
+      agentId,
+      status: "queued",
+      contextSnapshot: null,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Test issue",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      checkoutRunId: oldRunId,
+      executionRunId: oldRunId,
+    });
+
+    const result = await svc.assertCheckoutOwner(issueId, agentId, newRunId);
+
+    expect(result.adoptedFromRunId).toBe(oldRunId);
+    expect(result.checkoutRunId).toBe(newRunId);
   });
 });

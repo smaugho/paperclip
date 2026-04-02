@@ -667,6 +667,59 @@ export function issueService(db: Db) {
     const stale = await isTerminalOrMissingHeartbeatRun(input.expectedCheckoutRunId);
     if (!stale) return null;
 
+    return adoptCheckoutRunAtomically(input);
+  }
+
+  async function isSameAgentSiblingNotOnIssue(
+    runId: string,
+    actorAgentId: string,
+    issueId: string,
+  ): Promise<boolean> {
+    const run = await db
+      .select({
+        agentId: heartbeatRuns.agentId,
+        status: heartbeatRuns.status,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+      })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+
+    if (!run) return true;
+    if (run.agentId !== actorAgentId) return false;
+    if (TERMINAL_HEARTBEAT_RUN_STATUSES.has(run.status)) return true;
+
+    const snapshot = run.contextSnapshot as Record<string, unknown> | null;
+    const runIssueId =
+      snapshot && typeof snapshot === "object" && typeof snapshot.issueId === "string"
+        ? snapshot.issueId
+        : null;
+
+    return runIssueId !== issueId;
+  }
+
+  async function adoptSameAgentSiblingRun(input: {
+    issueId: string;
+    actorAgentId: string;
+    actorRunId: string;
+    expectedCheckoutRunId: string;
+  }) {
+    const safe = await isSameAgentSiblingNotOnIssue(
+      input.expectedCheckoutRunId,
+      input.actorAgentId,
+      input.issueId,
+    );
+    if (!safe) return null;
+
+    return adoptCheckoutRunAtomically(input);
+  }
+
+  async function adoptCheckoutRunAtomically(input: {
+    issueId: string;
+    actorAgentId: string;
+    actorRunId: string;
+    expectedCheckoutRunId: string;
+  }) {
     const now = new Date();
     const adopted = await db
       .update(issues)
@@ -1423,7 +1476,7 @@ export function issueService(db: Db) {
         current.assigneeAgentId === actorAgentId &&
         sameRunLock(current.checkoutRunId, actorRunId)
       ) {
-        return { ...current, adoptedFromRunId: null as string | null };
+        return { ...current, adoptedFromRunId: null as string | null, adoptionReason: null as string | null };
       }
 
       if (
@@ -1444,6 +1497,22 @@ export function issueService(db: Db) {
           return {
             ...adopted,
             adoptedFromRunId: current.checkoutRunId,
+            adoptionReason: "stale_checkout_run" as const,
+          };
+        }
+
+        const siblingAdopted = await adoptSameAgentSiblingRun({
+          issueId: id,
+          actorAgentId,
+          actorRunId,
+          expectedCheckoutRunId: current.checkoutRunId,
+        });
+
+        if (siblingAdopted) {
+          return {
+            ...siblingAdopted,
+            adoptedFromRunId: current.checkoutRunId,
+            adoptionReason: "same_agent_sibling_not_on_issue" as const,
           };
         }
       }
