@@ -1,6 +1,6 @@
-import { and, eq, gte, isNotNull, isNull, desc } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, desc } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companies, issues, issueComments } from "@paperclipai/db";
+import { companies, companyMemberships, issues, issueComments } from "@paperclipai/db";
 import { notFound } from "../errors.js";
 
 export function boardSourcesService(db: Db) {
@@ -21,7 +21,33 @@ export function boardSourcesService(db: Db) {
       const windowEnd = new Date();
       const windowStart = new Date(windowEnd.getTime() - windowHours * 60 * 60 * 1000);
 
-      // Board-authored issues: createdByUserId is set (not null)
+      // Resolve active board member user IDs for this company
+      const boardMemberRows = await db
+        .select({ principalId: companyMemberships.principalId })
+        .from(companyMemberships)
+        .where(
+          and(
+            eq(companyMemberships.companyId, companyId),
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.status, "active"),
+          ),
+        );
+      const boardUserIds = boardMemberRows.map((r) => r.principalId);
+
+      // If no board members, short-circuit
+      if (boardUserIds.length === 0) {
+        return {
+          companyId,
+          windowStart: windowStart.toISOString(),
+          windowEnd: windowEnd.toISOString(),
+          windowHours,
+          issues: [],
+          comments: [],
+          summary: { totalIssues: 0, totalComments: 0, totalSources: 0 },
+        };
+      }
+
+      // Board-authored issues: createdByUserId must be an active board member
       const boardIssues = await db
         .select({
           id: issues.id,
@@ -35,15 +61,15 @@ export function boardSourcesService(db: Db) {
         .where(
           and(
             eq(issues.companyId, companyId),
-            isNotNull(issues.createdByUserId),
+            inArray(issues.createdByUserId, boardUserIds),
             gte(issues.createdAt, windowStart),
             isNull(issues.hiddenAt),
           ),
         )
         .orderBy(desc(issues.createdAt));
 
-      // Board-authored comments: authorUserId is set (not null)
-      // Join with issues to get the issue identifier
+      // Board-authored comments: authorUserId must be an active board member
+      // Join with issues to get the issue identifier; exclude comments on hidden issues
       const boardComments = await db
         .select({
           id: issueComments.id,
@@ -58,8 +84,9 @@ export function boardSourcesService(db: Db) {
         .where(
           and(
             eq(issueComments.companyId, companyId),
-            isNotNull(issueComments.authorUserId),
+            inArray(issueComments.authorUserId, boardUserIds),
             gte(issueComments.createdAt, windowStart),
+            isNull(issues.hiddenAt),
           ),
         )
         .orderBy(desc(issueComments.createdAt));
