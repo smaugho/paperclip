@@ -16,6 +16,8 @@ export interface ParsedGitHubPr {
 export interface ReconciledPrState {
   status: IssueWorkProductStatus;
   reviewState: IssueWorkProductReviewState;
+  /** true when the PR lives in a non-fork (i.e. upstream/origin) repository. */
+  isUpstreamRepo: boolean;
 }
 
 /**
@@ -53,21 +55,26 @@ export async function reconcilePrState(
     state: string;
     draft: boolean;
     requested_reviewers?: unknown[];
+    base?: { repo?: { fork?: boolean } };
   };
+
+  // Upstream detection: base.repo.fork === false means the PR lives in
+  // the original (non-fork) repository — i.e. the upstream repo.
+  const isUpstreamRepo = pr.base?.repo?.fork === false;
 
   // Merged PR — terminal state
   if (pr.merged) {
-    return { status: "merged", reviewState: "approved" };
+    return { status: "merged", reviewState: "approved", isUpstreamRepo };
   }
 
   // Closed without merge
   if (pr.state === "closed") {
-    return { status: "closed", reviewState: "none" };
+    return { status: "closed", reviewState: "none", isUpstreamRepo };
   }
 
   // Draft PR
   if (pr.draft) {
-    return { status: "draft", reviewState: "none" };
+    return { status: "draft", reviewState: "none", isUpstreamRepo };
   }
 
   // Open PR — check latest substantive review
@@ -95,5 +102,5 @@ export async function reconcilePrState(
     reviewState = "needs_board_review";
   }
 
-  return { status: "active", reviewState };
+  return { status: "active", reviewState, isUpstreamRepo };
 }

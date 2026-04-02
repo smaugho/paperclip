@@ -632,12 +632,18 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const skipped: Array<{ id: string; title: string; reason: string }> = [];
     const errors: Array<{ id: string; title: string; error: string }> = [];
 
+    // Track effective state per PR for label application after the loop
+    const prStates: Array<{ status: string; isUpstream: boolean }> = [];
+
     const actor = getActorInfo(req);
 
     for (const wp of prProducts) {
       const parsed = parseGitHubPrUrl(wp.url!);
       if (!parsed) {
         skipped.push({ id: wp.id, title: wp.title, reason: "Could not parse GitHub PR URL" });
+        // Use cached metadata if available for label tracking
+        const cached = (wp.metadata as Record<string, unknown> | null)?.isUpstreamRepo;
+        prStates.push({ status: wp.status, isUpstream: cached === true });
         continue;
       }
 
@@ -645,21 +651,37 @@ export function issueRoutes(db: Db, storage: StorageService) {
         const state = await reconcilePrState(parsed);
         if (!state) {
           errors.push({ id: wp.id, title: wp.title, error: "GitHub API request failed" });
+          const cached = (wp.metadata as Record<string, unknown> | null)?.isUpstreamRepo;
+          prStates.push({ status: wp.status, isUpstream: cached === true });
           continue;
         }
 
-        // Skip update if nothing changed
-        if (wp.status === state.status && wp.reviewState === state.reviewState) {
+        // Track effective state for label application
+        prStates.push({ status: state.status, isUpstream: state.isUpstreamRepo });
+
+        // Cache isUpstreamRepo in metadata if not already stored
+        const existingMeta = (wp.metadata as Record<string, unknown> | null) ?? {};
+        const needsMetaUpdate = existingMeta.isUpstreamRepo !== state.isUpstreamRepo;
+
+        // Skip update if nothing changed (status, reviewState, and metadata)
+        if (wp.status === state.status && wp.reviewState === state.reviewState && !needsMetaUpdate) {
           skipped.push({ id: wp.id, title: wp.title, reason: "Already up to date" });
           continue;
         }
 
-        const updated = await workProductsSvc.update(wp.id, {
+        const patch: Record<string, unknown> = {
           status: state.status,
           reviewState: state.reviewState,
-        });
+        };
+        if (needsMetaUpdate) {
+          patch.metadata = { ...existingMeta, isUpstreamRepo: state.isUpstreamRepo };
+        }
+
+        const updated = await workProductsSvc.update(wp.id, patch);
 
         if (updated) {
+          const changedKeys = ["status", "reviewState"];
+          if (needsMetaUpdate) changedKeys.push("metadata");
           await logActivity(db, {
             companyId: issue.companyId,
             actorType: actor.actorType,
@@ -671,7 +693,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
             entityId: issue.id,
             details: {
               workProductId: wp.id,
-              changedKeys: ["status", "reviewState"],
+              changedKeys,
               reconciledFrom: { status: wp.status, reviewState: wp.reviewState },
               reconciledTo: { status: state.status, reviewState: state.reviewState },
             },
@@ -690,6 +712,31 @@ export function issueRoutes(db: Db, storage: StorageService) {
           error: err instanceof Error ? err.message : "Unknown error",
         });
       }
+    }
+
+    // ── Extension labels ───────────────────────────────────────────────
+    // Apply Merged / Upstream PR / Upstream Merged labels based on the
+    // reconciled PR states.  Labels are additive (never removed), following
+    // the same pattern as the existing "has-pr" auto-label.
+    try {
+      const hasMerged = prStates.some((s) => s.status === "merged");
+      const hasUpstream = prStates.some((s) => s.isUpstream);
+      const hasUpstreamMerged = prStates.some((s) => s.isUpstream && s.status === "merged");
+
+      if (hasMerged) {
+        const lid = await svc.ensureCompanyLabel(issue.companyId, "Merged", "#10B981");
+        await svc.addLabelToIssue(issue.id, issue.companyId, lid);
+      }
+      if (hasUpstream) {
+        const lid = await svc.ensureCompanyLabel(issue.companyId, "Upstream PR", "#F59E0B");
+        await svc.addLabelToIssue(issue.id, issue.companyId, lid);
+      }
+      if (hasUpstreamMerged) {
+        const lid = await svc.ensureCompanyLabel(issue.companyId, "Upstream Merged", "#059669");
+        await svc.addLabelToIssue(issue.id, issue.companyId, lid);
+      }
+    } catch (err) {
+      logger.warn({ err, issueId: issue.id }, "failed to apply extension PR labels");
     }
 
     res.json({ reconciled, skipped, errors });
