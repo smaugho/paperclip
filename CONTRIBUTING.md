@@ -69,6 +69,44 @@ This should include details about what you did, why you did it, why it matters &
 
 Please include screenshots if possible if you have a visible change. (use something like the [agent-browser skill](https://github.com/vercel-labs/agent-browser/blob/main/skills/agent-browser/SKILL.md) or similar to take screenshots). Ideally, you include before and after screenshots.
 
+## Upstream PR Readiness
+
+Fork PRs (on your fork) may reference internal context to help your team review.
+However, when a PR is promoted to the upstream `paperclipai/paperclip` repo, the
+description **must be self-contained**. Upstream reviewers have no access to your
+internal tracker, so references to it are noise at best and confusing at worst.
+
+**Rule:** Upstream PR descriptions must not contain:
+
+- Internal issue IDs (e.g. `DSPA-123`, `ACME-456`, or any `PREFIX-NUMBER` tracker references)
+- Private instance URLs (e.g. `https://your-instance.paperclip.ing/...`)
+- Local-only configuration context (e.g. references to local branches, local agent names, or internal process details)
+
+Instead, describe the motivation in plain prose that any open-source contributor
+can understand.
+
+### Before / After Example
+
+**Before (fork PR — contains internal context):**
+
+> ## Why
+>
+> Phase 1 / Packet 1 of the digest generator architecture
+> ([DSPA-811](/DSPA/issues/DSPA-811)). The downstream digest skill needs this
+> route to enumerate board activity before generating a digest.
+
+**After (upstream PR — self-contained):**
+
+> ## Why
+>
+> The digest generator needs a data source for board-authored content.
+> No route currently exposes board-authored issues and comments within a
+> time window. This is the first step toward automated digest generation.
+
+The thinking path, what-changed, verification, and risks sections stay the same —
+only strip tracker IDs, private URLs, and instance-specific references from the
+prose.
+
 Questions? Just ask in #dev — we're happy to help.
 
 Happy hacking!

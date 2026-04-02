@@ -47,3 +47,4 @@
 - [ ] I have updated relevant documentation to reflect my changes
 - [ ] I have considered and documented any risks above
 - [ ] I will address all Greptile and reviewer comments before requesting merge
+- [ ] If this PR targets **upstream** (`paperclipai/paperclip`): the description is self-contained — no internal issue IDs, private URLs, or instance-specific context (see [CONTRIBUTING.md](../CONTRIBUTING.md#upstream-pr-readiness))
