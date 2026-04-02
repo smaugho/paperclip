@@ -39,6 +39,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     executionWorkspaceId: null,
     executionWorkspacePreference: null,
     executionWorkspaceSettings: null,
+    closeoutPolicy: null,
     checkoutRunId: null,
     executionRunId: null,
     executionAgentNameKey: null,

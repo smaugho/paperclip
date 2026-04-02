@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
+import { issueWorkProductTypeSchema } from "./work-product.js";
 
 const executionWorkspaceStrategySchema = z
   .object({
@@ -27,6 +28,26 @@ export const issueAssigneeAdapterOverridesSchema = z
   })
   .strict();
 
+export const CLOSEOUT_ALTERNATIVE_EVIDENCE_TYPES = [
+  "document",
+  "attachment",
+  "comment",
+] as const;
+
+export type CloseoutAlternativeEvidenceType = (typeof CLOSEOUT_ALTERNATIVE_EVIDENCE_TYPES)[number];
+
+export const closeoutPolicySchema = z
+  .object({
+    requiredWorkProductTypes: z.array(issueWorkProductTypeSchema).optional(),
+    acceptAlternativeEvidence: z
+      .array(z.enum(CLOSEOUT_ALTERNATIVE_EVIDENCE_TYPES))
+      .optional(),
+    allowExemption: z.boolean().optional(),
+  })
+  .strict();
+
+export type CloseoutPolicy = z.infer<typeof closeoutPolicySchema>;
+
 export const createIssueSchema = z.object({
   projectId: z.string().uuid().optional().nullable(),
   projectWorkspaceId: z.string().uuid().optional().nullable(),
@@ -52,6 +73,7 @@ export const createIssueSchema = z.object({
     "agent_default",
   ]).optional().nullable(),
   executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),
+  closeoutPolicy: closeoutPolicySchema.optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
 });
 
