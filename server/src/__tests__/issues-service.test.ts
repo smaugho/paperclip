@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   activityLog,
   agents,
@@ -821,5 +821,134 @@ describeEmbeddedPostgres("issueService.create From Board auto-label", () => {
 
     expect(issue.labels).toHaveLength(1);
     expect(issue.labels![0].id).toBe(fromBoardLabel.id);
+  });
+});
+
+describeEmbeddedPostgres("issueService.addComment Board Comments auto-label", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+  let companyId: string;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-board-comments-label-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  beforeEach(async () => {
+    companyId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "TestCo",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+  });
+
+  afterEach(async () => {
+    await db.delete(issueComments);
+    await db.delete(issueLabels);
+    await db.delete(issues);
+    await db.delete(labels);
+    await db.delete(agents);
+    await db.delete(instanceSettings);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  async function createTestIssue(overrides?: Partial<typeof issues.$inferInsert>) {
+    return svc.create(companyId, {
+      title: "Test issue",
+      status: "todo",
+      priority: "medium",
+      ...overrides,
+    });
+  }
+
+  function getIssueLabels(issueId: string) {
+    return db
+      .select({ labelName: labels.name })
+      .from(issueLabels)
+      .innerJoin(labels, eq(issueLabels.labelId, labels.id))
+      .where(eq(issueLabels.issueId, issueId));
+  }
+
+  it("adds Board Comments label when a board user comments", async () => {
+    const issue = await createTestIssue();
+    await svc.addComment(issue.id, "Board feedback", { userId: "user-1" });
+
+    const issueLabelNames = await getIssueLabels(issue.id);
+    expect(issueLabelNames).toEqual([{ labelName: "Board Comments" }]);
+  });
+
+  it("does NOT add Board Comments label when an agent comments", async () => {
+    const agentId = randomUUID();
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "TestAgent",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const issue = await createTestIssue();
+    await svc.addComment(issue.id, "Agent update", { agentId });
+
+    const issueLabelNames = await getIssueLabels(issue.id);
+    expect(issueLabelNames).toEqual([]);
+  });
+
+  it("is idempotent across repeated board comments", async () => {
+    const issue = await createTestIssue();
+    await svc.addComment(issue.id, "First comment", { userId: "user-1" });
+    await svc.addComment(issue.id, "Second comment", { userId: "user-2" });
+
+    const issueLabelNames = await getIssueLabels(issue.id);
+    expect(issueLabelNames).toEqual([{ labelName: "Board Comments" }]);
+  });
+
+  it("does NOT add Board Comments if issue already has From Board label", async () => {
+    const issue = await createTestIssue();
+
+    // Manually create and attach a "From Board" label
+    const [fromBoardLabel] = await db
+      .insert(labels)
+      .values({ companyId, name: "From Board", color: "#10b981" })
+      .returning();
+    await db
+      .insert(issueLabels)
+      .values({ issueId: issue.id, labelId: fromBoardLabel.id, companyId });
+
+    await svc.addComment(issue.id, "Board comment on board issue", { userId: "user-1" });
+
+    const issueLabelNames = await getIssueLabels(issue.id);
+    expect(issueLabelNames).toEqual([{ labelName: "From Board" }]);
+  });
+
+  it("preserves existing labels when adding Board Comments", async () => {
+    const issue = await createTestIssue();
+
+    // Attach a custom label first
+    const [customLabel] = await db
+      .insert(labels)
+      .values({ companyId, name: "Bug", color: "#ef4444" })
+      .returning();
+    await db
+      .insert(issueLabels)
+      .values({ issueId: issue.id, labelId: customLabel.id, companyId });
+
+    await svc.addComment(issue.id, "Board input", { userId: "user-1" });
+
+    const issueLabelNames = await getIssueLabels(issue.id);
+    const names = issueLabelNames.map((l) => l.labelName).sort();
+    expect(names).toEqual(["Board Comments", "Bug"]);
   });
 });
