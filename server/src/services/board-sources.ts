@@ -97,7 +97,7 @@ export function boardSourcesService(db: Db) {
         issueId: c.issueId,
         issueIdentifier: c.issueIdentifier,
         authorUserId: c.authorUserId,
-        bodyPreview: c.body.length > 200 ? c.body.slice(0, 200) + "..." : c.body,
+        bodyPreview: c.body.length > 500 ? c.body.slice(0, 500) + "..." : c.body,
         createdAt: c.createdAt,
       }));
 

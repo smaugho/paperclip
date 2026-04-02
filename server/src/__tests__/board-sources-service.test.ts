@@ -167,8 +167,8 @@ describe("boardSourcesService", () => {
     expect(result.summary.totalComments).toBe(0);
   });
 
-  it("truncates comment body preview to 200 characters", async () => {
-    const longBody = "A".repeat(300);
+  it("truncates comment body preview to 500 characters", async () => {
+    const longBody = "A".repeat(600);
     const db = createMockDb({
       companyExists: true,
       boardMemberRows: [{ principalId: "user-board" }],
@@ -188,8 +188,8 @@ describe("boardSourcesService", () => {
     const svc = boardSourcesService(db);
     const result = await svc.list("company-1", 24);
 
-    expect(result.comments[0].bodyPreview).toBe("A".repeat(200) + "...");
-    expect(result.comments[0].bodyPreview.length).toBe(203);
+    expect(result.comments[0].bodyPreview).toBe("A".repeat(500) + "...");
+    expect(result.comments[0].bodyPreview.length).toBe(503);
   });
 
   it("throws when company does not exist", async () => {
