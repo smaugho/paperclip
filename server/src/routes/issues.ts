@@ -26,6 +26,7 @@ import {
   goalService,
   heartbeatService,
   issueApprovalService,
+  instanceSettingsService,
   issueDependencyService,
   issueService,
   documentService,
@@ -59,6 +60,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const workProductsSvc = workProductService(db);
   const documentsSvc = documentService(db);
   const depsSvc = issueDependencyService(db);
+  const instanceSettings = instanceSettingsService(db);
   const routinesSvc = routineService(db);
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -1345,35 +1347,38 @@ export function issueRoutes(db: Db, storage: StorageService) {
         });
       }
 
-      // Wake dependents whose all blockers are now resolved
+      // Wake dependents whose all blockers are now resolved (gated by experimental flag)
       if (blockerResolved) {
-        try {
-          const readyToWake = await depsSvc.findDependentsReadyToWake(issue.id);
-          for (const dependent of readyToWake) {
-            if (!dependent.assigneeAgentId) continue;
-            if (wakeups.has(dependent.assigneeAgentId)) continue;
-            wakeups.set(dependent.assigneeAgentId, {
-              source: "automation",
-              triggerDetail: "system",
-              reason: "dependency_resolved",
-              payload: {
-                issueId: dependent.id,
-                resolvedBlockerIssueId: issue.id,
-                mutation: "update",
-              },
-              requestedByActorType: actor.actorType,
-              requestedByActorId: actor.actorId,
-              contextSnapshot: {
-                issueId: dependent.id,
-                taskId: dependent.id,
-                resolvedBlockerIssueId: issue.id,
-                wakeReason: "dependency_resolved",
-                source: "issue.dependency_resolved",
-              },
-            });
+        const { enableDependencyWakeups } = await instanceSettings.getExperimental();
+        if (enableDependencyWakeups) {
+          try {
+            const readyToWake = await depsSvc.findDependentsReadyToWake(issue.id);
+            for (const dependent of readyToWake) {
+              if (!dependent.assigneeAgentId) continue;
+              if (wakeups.has(dependent.assigneeAgentId)) continue;
+              wakeups.set(dependent.assigneeAgentId, {
+                source: "automation",
+                triggerDetail: "system",
+                reason: "dependency_resolved",
+                payload: {
+                  issueId: dependent.id,
+                  resolvedBlockerIssueId: issue.id,
+                  mutation: "update",
+                },
+                requestedByActorType: actor.actorType,
+                requestedByActorId: actor.actorId,
+                contextSnapshot: {
+                  issueId: dependent.id,
+                  taskId: dependent.id,
+                  resolvedBlockerIssueId: issue.id,
+                  wakeReason: "dependency_resolved",
+                  source: "issue.dependency_resolved",
+                },
+              });
+            }
+          } catch (err) {
+            logger.warn({ err, issueId: issue.id }, "failed to wake dependents on blocker resolve");
           }
-        } catch (err) {
-          logger.warn({ err, issueId: issue.id }, "failed to wake dependents on blocker resolve");
         }
       }
 

@@ -42,6 +42,9 @@ vi.mock("../services/index.js", () => ({
     reportRunActivity: vi.fn(async () => undefined),
   }),
   issueApprovalService: () => ({}),
+  instanceSettingsService: () => ({
+    getExperimental: vi.fn().mockResolvedValue({ enableDependencyWakeups: false }),
+  }),
   issueDependencyService: () => ({
     addDependency: vi.fn(),
     removeDependency: vi.fn(),

@@ -38,6 +38,9 @@ vi.mock("../services/index.js", () => ({
   goalService: () => ({}),
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => ({}),
+  instanceSettingsService: () => ({
+    getExperimental: vi.fn().mockResolvedValue({ enableDependencyWakeups: false }),
+  }),
   issueDependencyService: () => ({
     addDependency: vi.fn(),
     removeDependency: vi.fn(),
