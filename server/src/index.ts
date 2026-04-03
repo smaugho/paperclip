@@ -31,6 +31,7 @@ import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import {
   feedbackService,
   heartbeatService,
+  logActivity,
   reconcilePersistedRuntimeServicesOnStartup,
   routineService,
 } from "./services/index.js";
@@ -664,6 +665,31 @@ export async function startServer(): Promise<StartedServer> {
             consecutiveFailures: backupStatus.consecutiveFailures,
           },
         });
+
+        // Wire backup failure to the activity log so operators see it in the
+        // Paperclip dashboard without inspecting raw logs.
+        try {
+          const allCompanies = await db.select({ id: companies.id }).from(companies);
+          for (const company of allCompanies) {
+            await logActivity(db, {
+              companyId: company.id,
+              actorType: "system",
+              actorId: "backup-scheduler",
+              action: "backup.failed",
+              entityType: "system",
+              entityId: "database-backup",
+              details: {
+                timestamp: backupStatus.lastTimestamp,
+                backupDir: config.databaseBackupDir,
+                errorType: err instanceof Error ? err.constructor.name : "UnknownError",
+                errorMessage: err instanceof Error ? err.message : String(err),
+                consecutiveFailures: backupStatus.consecutiveFailures,
+              },
+            });
+          }
+        } catch (activityErr) {
+          logger.warn({ err: activityErr }, "Failed to log backup failure to activity log");
+        }
       } finally {
         backupInFlight = false;
       }
