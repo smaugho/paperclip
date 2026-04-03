@@ -30,6 +30,8 @@ import { logger } from "./middleware/logger.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
+import { recordBackupSuccess, recordBackupFailure } from "./services/backup-status.js";
+import { publishGlobalLiveEvent } from "./services/live-events.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
@@ -626,6 +628,7 @@ export async function startServer(): Promise<StartedServer> {
           retentionDays: config.databaseBackupRetentionDays,
           filenamePrefix: "paperclip",
         });
+        const successStatus = recordBackupSuccess();
         logger.info(
           {
             backupFile: result.backupFile,
@@ -636,8 +639,28 @@ export async function startServer(): Promise<StartedServer> {
           },
           `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
         );
+        publishGlobalLiveEvent({
+          type: "backup.succeeded",
+          payload: {
+            timestamp: successStatus.lastTimestamp,
+            backupDir: config.databaseBackupDir,
+            backupFile: result.backupFile,
+            sizeBytes: result.sizeBytes,
+          },
+        });
       } catch (err) {
+        const failureStatus = recordBackupFailure(err);
         logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic database backup failed");
+        publishGlobalLiveEvent({
+          type: "backup.failed",
+          payload: {
+            timestamp: failureStatus.lastTimestamp,
+            backupDir: config.databaseBackupDir,
+            errorType: failureStatus.lastErrorType,
+            errorMessage: failureStatus.lastErrorMessage,
+            consecutiveFailures: failureStatus.consecutiveFailures,
+          },
+        });
       } finally {
         backupInFlight = false;
       }
