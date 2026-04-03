@@ -3087,7 +3087,7 @@ export function heartbeatService(db: Db) {
           .update(agentWakeupRequests)
           .set({
             status: "queued",
-            reason: "issue_execution_promoted",
+            reason: promotedReason,
             runId: newRun.id,
             claimedAt: null,
             finishedAt: null,
@@ -3363,7 +3363,7 @@ export function heartbeatService(db: Db) {
               agentId,
               source,
               triggerDetail,
-              reason: "issue_execution_same_name",
+              reason,
               payload,
               status: "coalesced",
               coalescedCount: 1,
@@ -3429,7 +3429,7 @@ export function heartbeatService(db: Db) {
             agentId,
             source,
             triggerDetail,
-            reason: "issue_execution_deferred",
+            reason,
             payload: deferredPayload,
             status: "deferred_issue_execution",
             requestedByActorType: opts.requestedByActorType ?? null,
