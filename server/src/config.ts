@@ -58,6 +58,7 @@ export interface Config {
   databaseBackupIntervalMinutes: number;
   databaseBackupRetentionDays: number;
   databaseBackupDir: string;
+  databaseBackupFailureIssueThreshold: number;
   serveUi: boolean;
   uiDevMiddleware: boolean;
   secretsProvider: SecretProvider;
@@ -223,6 +224,12 @@ export function loadConfig(): Config {
       fileDatabaseBackup?.dir ??
       resolveDefaultBackupDir(),
   );
+  const databaseBackupFailureIssueThreshold = Math.max(
+    1,
+    Number(process.env.PAPERCLIP_DB_BACKUP_FAILURE_ISSUE_THRESHOLD) ||
+      fileDatabaseBackup?.failureIssueThreshold ||
+      3,
+  );
 
   return {
     deploymentMode,
@@ -243,6 +250,7 @@ export function loadConfig(): Config {
     databaseBackupIntervalMinutes,
     databaseBackupRetentionDays,
     databaseBackupDir,
+    databaseBackupFailureIssueThreshold,
     serveUi:
       process.env.SERVE_UI !== undefined
         ? process.env.SERVE_UI === "true"

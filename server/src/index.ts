@@ -31,6 +31,7 @@ import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import {
   feedbackService,
   heartbeatService,
+  issueService,
   logActivity,
   reconcilePersistedRuntimeServicesOnStartup,
   routineService,
@@ -41,7 +42,7 @@ import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
-import { recordBackupSuccess, recordBackupFailure } from "./backup-status.js";
+import { recordBackupSuccess, recordBackupFailure, shouldCreateFailureIssue, markFailureIssueCreated } from "./backup-status.js";
 import { publishGlobalLiveEvent } from "./services/live-events.js";
 
 type BetterAuthSessionUser = {
@@ -689,6 +690,45 @@ export async function startServer(): Promise<StartedServer> {
           }
         } catch (activityErr) {
           logger.warn({ err: activityErr }, "Failed to log backup failure to activity log");
+        }
+
+        // Auto-create a Paperclip issue when consecutive failures reach the
+        // configured threshold.  The dedup flag in backup-status prevents
+        // duplicate issues within the same failure streak.
+        if (shouldCreateFailureIssue(config.databaseBackupFailureIssueThreshold)) {
+          try {
+            const allCompanies = await db.select({ id: companies.id }).from(companies);
+            const errorType = err instanceof Error ? err.constructor.name : "UnknownError";
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            for (const company of allCompanies) {
+              await issueService(db).create(company.id, {
+                title: `Critical: ${backupStatus.consecutiveFailures} consecutive database backup failures`,
+                description: [
+                  `The database backup scheduler has failed **${backupStatus.consecutiveFailures}** consecutive times.`,
+                  "",
+                  "**Latest error:**",
+                  `- Type: \`${errorType}\``,
+                  `- Message: ${errorMessage}`,
+                  `- Backup dir: \`${config.databaseBackupDir}\``,
+                  `- Timestamp: ${backupStatus.lastTimestamp}`,
+                  "",
+                  "Investigate the backup configuration and storage availability. ",
+                  "This issue was auto-created by the backup failure tracker.",
+                ].join("\n"),
+                status: "todo",
+                priority: "critical",
+                originKind: "system_alert",
+                originId: "backup-failure-tracker",
+              });
+            }
+            markFailureIssueCreated();
+            logger.warn(
+              { consecutiveFailures: backupStatus.consecutiveFailures },
+              "Auto-created issue for consecutive backup failures",
+            );
+          } catch (issueErr) {
+            logger.warn({ err: issueErr }, "Failed to auto-create issue for backup failures");
+          }
         }
       } finally {
         backupInFlight = false;
