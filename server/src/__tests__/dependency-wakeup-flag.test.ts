@@ -23,6 +23,8 @@ const mockHeartbeatService = vi.hoisted(() => ({
 
 const mockGetExperimental = vi.hoisted(() => vi.fn());
 const mockFindDependentsReadyToWake = vi.hoisted(() => vi.fn());
+const mockListBlockers = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const mockListDependents = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 
 vi.mock("../services/index.js", () => ({
   accessService: () => ({
@@ -41,8 +43,8 @@ vi.mock("../services/index.js", () => ({
   issueDependencyService: () => ({
     addDependency: vi.fn(),
     removeDependency: vi.fn(),
-    listBlockers: vi.fn().mockResolvedValue([]),
-    listDependents: vi.fn(),
+    listBlockers: mockListBlockers,
+    listDependents: mockListDependents,
     findDependentsReadyToWake: mockFindDependentsReadyToWake,
   }),
   issueService: () => mockIssueService,
@@ -96,7 +98,7 @@ const DEPENDENT_ISSUE = {
   assigneeAgentId: "agent-2",
 };
 
-describe("enableDependencyWakeups flag", () => {
+describe("enableDependencies flag", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
@@ -110,10 +112,12 @@ describe("enableDependencyWakeups flag", () => {
     });
   });
 
-  it("skips dependency wakeups when enableDependencyWakeups is false (default off path)", async () => {
+  // ── Wakeup gating ──────────────────────────────────────────────────
+
+  it("skips dependency wakeups when enableDependencies is false (default off path)", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ status: "in_progress" }));
     mockIssueService.update.mockResolvedValue(makeIssue({ status: "done" }));
-    mockGetExperimental.mockResolvedValue({ enableDependencyWakeups: false });
+    mockGetExperimental.mockResolvedValue({ enableDependencies: false });
     mockFindDependentsReadyToWake.mockResolvedValue([DEPENDENT_ISSUE]);
 
     const app = createApp();
@@ -130,10 +134,10 @@ describe("enableDependencyWakeups flag", () => {
     expect(depWakeups).toHaveLength(0);
   });
 
-  it("wakes dependents when enableDependencyWakeups is true (enabled path)", async () => {
+  it("wakes dependents when enableDependencies is true (enabled path)", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue({ status: "in_progress" }));
     mockIssueService.update.mockResolvedValue(makeIssue({ status: "done" }));
-    mockGetExperimental.mockResolvedValue({ enableDependencyWakeups: true });
+    mockGetExperimental.mockResolvedValue({ enableDependencies: true });
     mockFindDependentsReadyToWake.mockResolvedValue([DEPENDENT_ISSUE]);
 
     const app = createApp();
@@ -157,7 +161,7 @@ describe("enableDependencyWakeups flag", () => {
     // Transition from todo to in_progress — not a blocker resolve
     mockIssueService.getById.mockResolvedValue(makeIssue({ status: "todo" }));
     mockIssueService.update.mockResolvedValue(makeIssue({ status: "in_progress" }));
-    mockGetExperimental.mockResolvedValue({ enableDependencyWakeups: true });
+    mockGetExperimental.mockResolvedValue({ enableDependencies: true });
 
     const app = createApp();
     const res = await request(app)
@@ -167,5 +171,71 @@ describe("enableDependencyWakeups flag", () => {
     expect(res.status).toBe(200);
     // Not a terminal transition, so findDependentsReadyToWake should NOT be called
     expect(mockFindDependentsReadyToWake).not.toHaveBeenCalled();
+  });
+
+  // ── CRUD route gating ──────────────────────────────────────────────
+
+  it("returns 403 for GET /issues/:id/dependencies when flag is off", async () => {
+    mockGetExperimental.mockResolvedValue({ enableDependencies: false });
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const app = createApp();
+    const res = await request(app)
+      .get("/api/issues/11111111-1111-4111-8111-111111111111/dependencies");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/not enabled/i);
+    expect(mockListBlockers).not.toHaveBeenCalled();
+  });
+
+  it("allows GET /issues/:id/dependencies when flag is on", async () => {
+    mockGetExperimental.mockResolvedValue({ enableDependencies: true });
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+    mockListBlockers.mockResolvedValue([]);
+
+    const app = createApp();
+    const res = await request(app)
+      .get("/api/issues/11111111-1111-4111-8111-111111111111/dependencies");
+
+    expect(res.status).toBe(200);
+    expect(mockListBlockers).toHaveBeenCalled();
+  });
+
+  it("returns 403 for GET /issues/:id/dependents when flag is off", async () => {
+    mockGetExperimental.mockResolvedValue({ enableDependencies: false });
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const app = createApp();
+    const res = await request(app)
+      .get("/api/issues/11111111-1111-4111-8111-111111111111/dependents");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/not enabled/i);
+    expect(mockListDependents).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for POST /issues/:id/dependencies when flag is off", async () => {
+    mockGetExperimental.mockResolvedValue({ enableDependencies: false });
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const app = createApp();
+    const res = await request(app)
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/dependencies")
+      .send({ blockerIssueId: "22222222-2222-4222-8222-222222222222" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/not enabled/i);
+  });
+
+  it("returns 403 for DELETE /issues/:id/dependencies/:blockerIssueId when flag is off", async () => {
+    mockGetExperimental.mockResolvedValue({ enableDependencies: false });
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const app = createApp();
+    const res = await request(app)
+      .delete("/api/issues/11111111-1111-4111-8111-111111111111/dependencies/22222222-2222-4222-8222-222222222222");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/not enabled/i);
   });
 });

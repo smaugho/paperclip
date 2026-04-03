@@ -24,7 +24,7 @@ export function InstanceExperimentalSettings() {
   });
 
   const toggleMutation = useMutation({
-    mutationFn: async (patch: { enableIsolatedWorkspaces?: boolean; autoRestartDevServerWhenIdle?: boolean; enableDependencyWakeups?: boolean }) =>
+    mutationFn: async (patch: { enableIsolatedWorkspaces?: boolean; autoRestartDevServerWhenIdle?: boolean; enableDependencies?: boolean }) =>
       instanceSettingsApi.updateExperimental(patch),
     onSuccess: async () => {
       setActionError(null);
@@ -54,7 +54,7 @@ export function InstanceExperimentalSettings() {
 
   const enableIsolatedWorkspaces = experimentalQuery.data?.enableIsolatedWorkspaces === true;
   const autoRestartDevServerWhenIdle = experimentalQuery.data?.autoRestartDevServerWhenIdle === true;
-  const enableDependencyWakeups = experimentalQuery.data?.enableDependencyWakeups === true;
+  const enableDependencies = experimentalQuery.data?.enableDependencies === true;
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -139,27 +139,27 @@ export function InstanceExperimentalSettings() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
-            <h2 className="text-sm font-semibold">Enable Dependency Wakeups</h2>
+            <h2 className="text-sm font-semibold">Enable Dependencies</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              When a blocker issue is resolved (done or cancelled), automatically wake the assignee of any dependent
-              issue whose blockers are all resolved. Off by default until the dependency feature is fully validated.
+              Enable the full issue dependency feature: blocker/dependent CRUD, dependency data in heartbeat context,
+              and automatic wakeups when all blockers are resolved. Off by default until the feature is fully validated.
             </p>
           </div>
           <button
             type="button"
             data-slot="toggle"
-            aria-label="Toggle dependency wakeup experimental setting"
+            aria-label="Toggle dependencies experimental setting"
             disabled={toggleMutation.isPending}
             className={cn(
               "relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-              enableDependencyWakeups ? "bg-green-600" : "bg-muted",
+              enableDependencies ? "bg-green-600" : "bg-muted",
             )}
-            onClick={() => toggleMutation.mutate({ enableDependencyWakeups: !enableDependencyWakeups })}
+            onClick={() => toggleMutation.mutate({ enableDependencies: !enableDependencies })}
           >
             <span
               className={cn(
                 "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform",
-                enableDependencyWakeups ? "translate-x-4.5" : "translate-x-0.5",
+                enableDependencies ? "translate-x-4.5" : "translate-x-0.5",
               )}
             />
           </button>
