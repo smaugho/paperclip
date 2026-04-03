@@ -40,6 +40,7 @@ import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
+import { recordBackupSuccess, recordBackupFailure } from "./backup-status.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -648,7 +649,9 @@ export async function startServer(): Promise<StartedServer> {
           },
           `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
         );
+        recordBackupSuccess();
       } catch (err) {
+        recordBackupFailure();
         logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic database backup failed");
       } finally {
         backupInFlight = false;
