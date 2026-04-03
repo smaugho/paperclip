@@ -332,4 +332,43 @@ describe("GET /api/agents/:id/inbox-lite", () => {
     expect(res.status).toBe(401);
     expect(mockIssueService.list).not.toHaveBeenCalled();
   });
+
+  it("allows same-company peer agent (not in management chain) to read inbox-lite", async () => {
+    const peerId = "66666666-6666-4666-8666-666666666666";
+    const peerAgent = {
+      ...baseAgent,
+      id: peerId,
+      name: "Peer",
+      urlKey: "peer",
+      role: "engineer",
+      title: "Peer Engineer",
+      reportsTo: managerId,
+    };
+
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === agentId) return baseAgent;
+      if (id === managerId) return managerAgent;
+      if (id === peerId) return peerAgent;
+      return null;
+    });
+
+    const app = createApp({
+      type: "agent",
+      agentId: peerId,
+      companyId,
+      runId: "run-peer",
+      source: "agent_key",
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
+
+    // Policy: any same-company agent can read another agent's inbox-lite.
+    // This is consistent with GET /agents/:id (agent detail) which also
+    // allows same-company reads via assertCanReadAgent.
+    expect(res.status).toBe(200);
+    expect(mockIssueService.list).toHaveBeenCalledWith(companyId, {
+      assigneeAgentId: agentId,
+      status: "todo,in_progress,blocked",
+    });
+  });
 });
