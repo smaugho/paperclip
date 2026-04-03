@@ -6,6 +6,7 @@ import { issuesApi } from "../api/issues";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
+import { instanceSettingsApi } from "../api/instanceSettings";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
@@ -14,8 +15,14 @@ import { usePanel } from "../context/PanelContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
+import { extractIssueTimelineEvents } from "../lib/issue-timeline-events";
 import { queryKeys } from "../lib/queryKeys";
-import { createIssueDetailPath, readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
+import {
+  createIssueDetailPath,
+  readIssueDetailBreadcrumb,
+  shouldArmIssueDetailInboxQuickArchive,
+} from "../lib/issueDetailBreadcrumb";
+import { hasBlockingShortcutDialog, resolveInboxQuickArchiveKeyAction } from "../lib/keyboardShortcuts";
 import {
   applyOptimisticIssueCommentUpdate,
   createOptimisticIssueComment,
@@ -35,6 +42,7 @@ import { IssueWorkProductsSection } from "../components/IssueWorkProductsSection
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
+import { ImageGalleryModal } from "../components/ImageGalleryModal";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
@@ -69,7 +77,7 @@ import {
   X,
 } from "lucide-react";
 import type { ActivityEvent } from "@paperclipai/shared";
-import type { Agent, Issue, IssueAttachment, IssueComment } from "@paperclipai/shared";
+import type { Agent, FeedbackVote, Issue, IssueAttachment, IssueComment } from "@paperclipai/shared";
 
 type CommentReassignment = IssueCommentReassignment;
 type IssueDetailComment = (IssueComment | OptimisticIssueComment) & {
@@ -86,6 +94,7 @@ const ACTION_LABELS: Record<string, string> = {
   "issue.checked_out": "checked out the issue",
   "issue.released": "released the issue",
   "issue.comment_added": "added a comment",
+  "issue.feedback_vote_saved": "saved feedback on an AI output",
   "issue.attachment_added": "added an attachment",
   "issue.attachment_removed": "removed an attachment",
   "issue.document_created": "created a document",
@@ -103,6 +112,8 @@ const ACTION_LABELS: Record<string, string> = {
   "approval.approved": "approved",
   "approval.rejected": "rejected",
 };
+
+const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
 
 function humanizeValue(value: unknown): string {
   if (typeof value !== "string") return String(value ?? "none");
@@ -202,6 +213,63 @@ function formatAction(action: string, details?: Record<string, unknown> | null):
   return ACTION_LABELS[action] ?? action.replace(/[._]/g, " ");
 }
 
+function mergeOptimisticFeedbackVote(
+  previousVotes: FeedbackVote[] | undefined,
+  nextVote: {
+    issueId: string;
+    targetType: "issue_comment" | "issue_document_revision";
+    targetId: string;
+    vote: "up" | "down";
+    reason?: string;
+  },
+  currentUserId: string | null,
+): FeedbackVote[] {
+  const now = new Date();
+  const existingVotes = previousVotes ?? [];
+  const existingIndex = existingVotes.findIndex(
+    (feedbackVote) =>
+      feedbackVote.targetType === nextVote.targetType &&
+      feedbackVote.targetId === nextVote.targetId &&
+      (!currentUserId || feedbackVote.authorUserId === currentUserId),
+  );
+
+  if (existingIndex >= 0) {
+    const existingVote = existingVotes[existingIndex]!;
+    const updatedVote: FeedbackVote = {
+      ...existingVote,
+      vote: nextVote.vote,
+      reason:
+        nextVote.reason !== undefined
+          ? nextVote.reason.trim() || null
+          : existingVote.reason,
+      updatedAt: now,
+    };
+    const nextVotes = [...existingVotes];
+    nextVotes[existingIndex] = updatedVote;
+    return nextVotes;
+  }
+
+  return [
+    ...existingVotes,
+    {
+      id: `optimistic:${nextVote.targetType}:${nextVote.targetId}`,
+      companyId: "",
+      issueId: nextVote.issueId,
+      targetType: nextVote.targetType,
+      targetId: nextVote.targetId,
+      authorUserId: currentUserId ?? "current-user",
+      vote: nextVote.vote,
+      reason: nextVote.reason?.trim() || null,
+      sharedWithLabs: false,
+      sharedAt: null,
+      consentVersion: null,
+      redactionSummary: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+}
+
 function ActorIdentity({ evt, agentMap }: { evt: ActivityEvent; agentMap: Map<string, Agent> }) {
   const id = evt.actorId;
   if (evt.actorType === "agent") {
@@ -215,7 +283,7 @@ function ActorIdentity({ evt, agentMap }: { evt: ActivityEvent; agentMap: Map<st
 
 export function IssueDetail() {
   const { issueId } = useParams<{ issueId: string }>();
-  const { selectedCompanyId } = useCompany();
+  const { selectedCompanyId, selectedCompany } = useCompany();
   const { openPanel, closePanel, panelVisible, setPanelVisible } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
@@ -232,6 +300,8 @@ export function IssueDetail() {
   });
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
@@ -345,6 +415,19 @@ export function IssueDetail() {
     enabled: !!selectedCompanyId,
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const { data: feedbackVotes } = useQuery({
+    queryKey: queryKeys.issues.feedbackVotes(issueId!),
+    queryFn: () => issuesApi.listFeedbackVotes(issueId!),
+    enabled: !!issueId && !!currentUserId,
+  });
+  const { data: instanceGeneralSettings } = useQuery({
+    queryKey: queryKeys.instance.generalSettings,
+    queryFn: () => instanceSettingsApi.getGeneral(),
+    enabled: !!issueId,
+    retry: false,
+  });
+  const keyboardShortcutsEnabled = instanceGeneralSettings?.keyboardShortcuts === true;
+  const feedbackDataSharingPreference = instanceGeneralSettings?.feedbackDataSharingPreference ?? "prompt";
   const { orderedProjects } = useProjectOrder({
     projects: projects ?? [],
     companyId: selectedCompanyId,
@@ -489,6 +572,10 @@ export function IssueDetail() {
     () => commentsWithRunMeta.filter((comment) => comment.queueState !== "queued"),
     [commentsWithRunMeta],
   );
+  const timelineEvents = useMemo(
+    () => extractIssueTimelineEvents(activity),
+    [activity],
+  );
 
   const issueCostSummary = useMemo(() => {
     let input = 0;
@@ -535,6 +622,7 @@ export function IssueDetail() {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.approvals(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.dependencies(issueId!) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.feedbackVotes(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
@@ -741,6 +829,71 @@ export function IssueDetail() {
     },
   });
 
+  const feedbackVoteMutation = useMutation({
+    mutationFn: (variables: {
+      targetType: "issue_comment" | "issue_document_revision";
+      targetId: string;
+      vote: "up" | "down";
+      reason?: string;
+      allowSharing?: boolean;
+      sharingPreferenceAtSubmit: "allowed" | "not_allowed" | "prompt";
+    }) =>
+      issuesApi.upsertFeedbackVote(issueId!, {
+        targetType: variables.targetType,
+        targetId: variables.targetId,
+        vote: variables.vote,
+        ...(variables.reason ? { reason: variables.reason } : {}),
+        ...(variables.allowSharing ? { allowSharing: true } : {}),
+      }),
+    onMutate: async (variables) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.issues.feedbackVotes(issueId!) });
+      const previousVotes = queryClient.getQueryData<FeedbackVote[]>(
+        queryKeys.issues.feedbackVotes(issueId!),
+      );
+      queryClient.setQueryData<FeedbackVote[]>(
+        queryKeys.issues.feedbackVotes(issueId!),
+        mergeOptimisticFeedbackVote(
+          previousVotes,
+          {
+            issueId: issueId!,
+            targetType: variables.targetType,
+            targetId: variables.targetId,
+            vote: variables.vote,
+            reason: variables.reason,
+          },
+          currentUserId,
+        ),
+      );
+      return { previousVotes };
+    },
+    onSuccess: (_savedVote, variables) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.feedbackVotes(issueId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings });
+      pushToast({
+        title:
+          variables.sharingPreferenceAtSubmit === "prompt"
+            ? variables.allowSharing
+              ? "Feedback saved. Future votes will share"
+              : "Feedback saved. Future votes will stay local"
+            : variables.allowSharing
+              ? "Feedback saved and sharing enabled"
+              : "Feedback saved",
+        tone: "success",
+      });
+    },
+    onError: (err, _variables, context) => {
+      if (context?.previousVotes) {
+        queryClient.setQueryData(queryKeys.issues.feedbackVotes(issueId!), context.previousVotes);
+      }
+      pushToast({
+        title: "Failed to save feedback",
+        body: err instanceof Error ? err.message : "Unknown error",
+        tone: "error",
+      });
+    },
+  });
+
   const uploadAttachment = useMutation({
     mutationFn: async (file: File) => {
       if (!selectedCompanyId) throw new Error("No company selected");
@@ -832,6 +985,22 @@ export function IssueDetail() {
     },
   });
 
+  const archiveFromInbox = useMutation({
+    mutationFn: (id: string) => issuesApi.archiveFromInbox(id),
+    onSuccess: () => {
+      invalidateIssue();
+      navigate(sourceBreadcrumb.href.startsWith("/inbox") ? sourceBreadcrumb.href : "/inbox", { replace: true });
+      pushToast({ title: "Issue archived from inbox", tone: "success" });
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Archive failed",
+        body: err instanceof Error ? err.message : "Unable to archive this issue from the inbox",
+        tone: "error",
+      });
+    },
+  });
+
   useEffect(() => {
     const titleLabel = issue?.title ?? issueId ?? "Issue";
     setBreadcrumbs([
@@ -865,6 +1034,76 @@ export function IssueDetail() {
     }
     return () => closePanel();
   }, [issue]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const inboxQuickArchiveArmedRef = useRef(false);
+  const canQuickArchiveFromInbox =
+    keyboardShortcutsEnabled &&
+    !issue?.hiddenAt &&
+    sourceBreadcrumb.href.startsWith("/inbox") &&
+    shouldArmIssueDetailInboxQuickArchive(location.state);
+
+  useEffect(() => {
+    if (!issue?.id || !canQuickArchiveFromInbox) {
+      inboxQuickArchiveArmedRef.current = false;
+      return;
+    }
+
+    inboxQuickArchiveArmedRef.current = true;
+
+    const disarm = () => {
+      inboxQuickArchiveArmedRef.current = false;
+    };
+
+    const handlePointerDown = () => {
+      disarm();
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement && event.target !== document.body) {
+        disarm();
+      }
+    };
+
+    const handleSelectionChange = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || selection.toString().trim().length === 0) return;
+      disarm();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const action = resolveInboxQuickArchiveKeyAction({
+        armed: inboxQuickArchiveArmedRef.current,
+        defaultPrevented: event.defaultPrevented,
+        key: event.key,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        target: event.target,
+        hasOpenDialog: hasBlockingShortcutDialog(document),
+      });
+
+      if (action === "ignore") return;
+
+      disarm();
+      if (action !== "archive") return;
+
+      event.preventDefault();
+      if (!archiveFromInbox.isPending) {
+        archiveFromInbox.mutate(issue.id);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("focusin", handleFocusIn, true);
+    document.addEventListener("selectionchange", handleSelectionChange);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("focusin", handleFocusIn, true);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [archiveFromInbox, canQuickArchiveFromInbox, issue?.id]);
 
   const copyIssueToClipboard = async () => {
     if (!issue) return;
@@ -919,6 +1158,7 @@ export function IssueDetail() {
 
   const isImageAttachment = (attachment: IssueAttachment) => attachment.contentType.startsWith("image/");
   const attachmentList = attachments ?? [];
+  const imageAttachments = attachmentList.filter(isImageAttachment);
   const hasAttachments = attachmentList.length > 0;
   const attachmentUploadButton = (
     <>
@@ -1181,10 +1421,23 @@ export function IssueDetail() {
       <IssueDocumentsSection
         issue={issue}
         canDeleteDocuments={Boolean(session?.user?.id)}
+        feedbackVotes={feedbackVotes}
+        feedbackDataSharingPreference={feedbackDataSharingPreference}
+        feedbackTermsUrl={FEEDBACK_TERMS_URL}
         mentions={mentionOptions}
         imageUploadHandler={async (file) => {
           const attachment = await uploadAttachment.mutateAsync(file);
           return attachment.contentPath;
+        }}
+        onVote={async (revisionId, vote, options) => {
+          await feedbackVoteMutation.mutateAsync({
+            targetType: "issue_document_revision",
+            targetId: revisionId,
+            vote,
+            reason: options?.reason,
+            allowSharing: options?.allowSharing,
+            sharingPreferenceAtSubmit: feedbackDataSharingPreference,
+          });
         }}
         extraActions={!hasAttachments ? attachmentUploadButton : undefined}
       />
@@ -1244,20 +1497,35 @@ export function IssueDetail() {
                 {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
               </p>
               {isImageAttachment(attachment) && (
-                <a href={attachment.contentPath} target="_blank" rel="noreferrer">
+                <button
+                  type="button"
+                  className="block w-full text-left"
+                  onClick={() => {
+                    const idx = imageAttachments.findIndex((a) => a.id === attachment.id);
+                    setGalleryIndex(idx >= 0 ? idx : 0);
+                    setGalleryOpen(true);
+                  }}
+                >
                   <img
                     src={attachment.contentPath}
                     alt={attachment.originalFilename ?? "attachment"}
-                    className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10"
+                    className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10 cursor-pointer hover:opacity-80 transition-opacity"
                     loading="lazy"
                   />
-                </a>
+                </button>
               )}
             </div>
           ))}
         </div>
         </div>
       ) : null}
+
+      <ImageGalleryModal
+        images={imageAttachments}
+        initialIndex={galleryIndex}
+        open={galleryOpen}
+        onOpenChange={setGalleryOpen}
+      />
 
       <IssueWorkspaceCard
         issue={issue}
@@ -1296,11 +1564,16 @@ export function IssueDetail() {
           <CommentThread
             comments={timelineComments}
             queuedComments={queuedComments}
+            feedbackVotes={feedbackVotes}
+            feedbackDataSharingPreference={feedbackDataSharingPreference}
+            feedbackTermsUrl={FEEDBACK_TERMS_URL}
             linkedRuns={timelineRuns}
+            timelineEvents={timelineEvents}
             companyId={issue.companyId}
             projectId={issue.projectId}
             issueStatus={issue.status}
             agentMap={agentMap}
+            currentUserId={currentUserId}
             draftKey={`paperclip:issue-comment-draft:${issue.id}`}
             enableReassign
             reassignOptions={commentReassignOptions}
@@ -1311,6 +1584,16 @@ export function IssueDetail() {
               await interruptQueuedComment.mutateAsync(runId);
             }}
             interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
+            onVote={async (commentId, vote, options) => {
+              await feedbackVoteMutation.mutateAsync({
+                targetType: "issue_comment",
+                targetId: commentId,
+                vote,
+                reason: options?.reason,
+                allowSharing: options?.allowSharing,
+                sharingPreferenceAtSubmit: feedbackDataSharingPreference,
+              });
+            }}
             onAdd={async (body, reopen, reassignment) => {
               if (reassignment) {
                 await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });

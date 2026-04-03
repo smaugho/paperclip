@@ -36,17 +36,29 @@ vi.mock("../services/index.js", () => ({
   executionWorkspaceService: () => ({
     getById: vi.fn(),
   }),
+  feedbackService: () => ({
+    listIssueVotesForUser: vi.fn(async () => []),
+    saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
+  }),
   goalService: () => mockGoalService,
   heartbeatService: () => ({
     wakeup: vi.fn(async () => undefined),
     reportRunActivity: vi.fn(async () => undefined),
   }),
   instanceSettingsService: () => ({
+    get: vi.fn(async () => ({
+      id: "instance-settings-1",
+      general: {
+        censorUsernameInLogs: false,
+        feedbackDataSharingPreference: "prompt",
+      },
+    })),
     getExperimental: vi.fn(async () => ({
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
       enableWorkProducts: false,
     })),
+    listCompanyIds: vi.fn(async () => ["company-1"]),
   }),
   issueApprovalService: () => ({}),
   issueDependencyService: () => ({

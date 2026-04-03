@@ -32,6 +32,7 @@ vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
   documentService: () => mockDocumentsService,
   executionWorkspaceService: () => ({}),
+  feedbackService: () => ({}),
   goalService: () => ({}),
   heartbeatService: () => ({
     wakeup: vi.fn(async () => undefined),
@@ -43,6 +44,7 @@ vi.mock("../services/index.js", () => ({
       autoRestartDevServerWhenIdle: false,
       enableWorkProducts: false,
     })),
+    getGeneral: vi.fn(async () => ({ feedbackDataSharingPreference: "prompt" })),
   }),
   issueApprovalService: () => ({}),
   issueDependencyService: () => ({

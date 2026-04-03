@@ -35,14 +35,26 @@ vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
   documentService: () => ({}),
   executionWorkspaceService: () => ({}),
+  feedbackService: () => ({
+    listIssueVotesForUser: vi.fn(async () => []),
+    saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
+  }),
   goalService: () => ({}),
   heartbeatService: () => mockHeartbeatService,
   instanceSettingsService: () => ({
+    get: vi.fn(async () => ({
+      id: "instance-settings-1",
+      general: {
+        censorUsernameInLogs: false,
+        feedbackDataSharingPreference: "prompt",
+      },
+    })),
     getExperimental: vi.fn(async () => ({
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
       enableWorkProducts: false,
     })),
+    listCompanyIds: vi.fn(async () => ["company-1"]),
   }),
   issueApprovalService: () => ({}),
   issueDependencyService: () => ({
