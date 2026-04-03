@@ -40,6 +40,8 @@ import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
+import { recordBackupSuccess, recordBackupFailure } from "./backup-status.js";
+import { publishGlobalLiveEvent } from "./services/live-events.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -648,8 +650,20 @@ export async function startServer(): Promise<StartedServer> {
           },
           `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
         );
+        recordBackupSuccess();
       } catch (err) {
         logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic database backup failed");
+        const backupStatus = recordBackupFailure();
+        publishGlobalLiveEvent({
+          type: "backup.failed",
+          payload: {
+            timestamp: backupStatus.lastTimestamp,
+            backupDir: config.databaseBackupDir,
+            errorType: err instanceof Error ? err.constructor.name : "UnknownError",
+            errorMessage: err instanceof Error ? err.message : String(err),
+            consecutiveFailures: backupStatus.consecutiveFailures,
+          },
+        });
       } finally {
         backupInFlight = false;
       }
