@@ -68,10 +68,28 @@ export function issueRoutes(db: Db, storage: StorageService) {
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
   });
 
+  async function assertDependenciesEnabled(res: Response): Promise<boolean> {
+    const { enableDependencies } = await instanceSettings.getExperimental();
+    if (!enableDependencies) {
+      res.status(403).json({ error: "Dependencies feature is not enabled. Enable the 'enableDependencies' experimental flag in instance settings." });
+      return false;
+    }
+    return true;
+  }
+
   async function assertWorkProductsEnabled(res: Response): Promise<boolean> {
     const { enableWorkProducts } = await instanceSettings.getExperimental();
     if (!enableWorkProducts) {
       res.status(403).json({ error: "Work products feature is not enabled. Enable the 'enableWorkProducts' experimental flag in instance settings." });
+      return false;
+    }
+    return true;
+  }
+
+  async function assertDependenciesEnabled(res: Response): Promise<boolean> {
+    const { enableDependencies } = await instanceSettings.getExperimental();
+    if (!enableDependencies) {
+      res.status(403).json({ error: "Dependencies feature is not enabled. Enable the 'enableDependencies' experimental flag in instance settings." });
       return false;
     }
     return true;
@@ -436,12 +454,13 @@ export function issueRoutes(db: Db, storage: StorageService) {
         ? req.query.wakeCommentId.trim()
         : null;
 
+    const { enableDependencies: depsEnabledForDetail } = await instanceSettings.getExperimental();
     const [{ project, goal }, ancestors, commentCursor, wakeComment, blockers] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.getCommentCursor(issue.id),
       wakeCommentId ? svc.getComment(wakeCommentId) : null,
-      depsSvc.listBlockers(issue.id),
+      depsEnabledForDetail ? depsSvc.listBlockers(issue.id) : Promise.resolve([]),
     ]);
 
     res.json({
@@ -502,6 +521,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   // ── Issue dependency (blocker) routes ──────────────────────────────
 
   router.get("/issues/:id/dependencies", async (req, res) => {
+    if (!(await assertDependenciesEnabled(res))) return;
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -514,6 +534,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   });
 
   router.post("/issues/:id/dependencies", validate(addIssueDependencySchema), async (req, res) => {
+    if (!(await assertDependenciesEnabled(res))) return;
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -546,6 +567,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   });
 
   router.delete("/issues/:id/dependencies/:blockerIssueId", async (req, res) => {
+    if (!(await assertDependenciesEnabled(res))) return;
     const id = req.params.id as string;
     const blockerIssueId = req.params.blockerIssueId as string;
     const issue = await svc.getById(id);
@@ -580,6 +602,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   });
 
   router.get("/issues/:id/dependents", async (req, res) => {
+    if (!(await assertDependenciesEnabled(res))) return;
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -1502,8 +1525,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
         });
       }
 
-      // Wake dependents whose all blockers are now resolved
-      if (blockerResolved) {
+      // Wake dependents whose all blockers are now resolved (only when dependencies feature is enabled)
+      const { enableDependencies: depsEnabled } = await instanceSettings.getExperimental();
+      if (blockerResolved && depsEnabled) {
         try {
           const readyToWake = await depsSvc.findDependentsReadyToWake(issue.id);
           for (const dependent of readyToWake) {

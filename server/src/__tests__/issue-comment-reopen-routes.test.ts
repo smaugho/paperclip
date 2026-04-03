@@ -42,6 +42,7 @@ vi.mock("../services/index.js", () => ({
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
       enableWorkProducts: false,
+      enableDependencies: false,
     })),
   }),
   issueApprovalService: () => ({}),
