@@ -6,6 +6,7 @@ export interface InstanceExperimentalSettings {
   enableIsolatedWorkspaces: boolean;
   autoRestartDevServerWhenIdle: boolean;
   enableWorkProducts: boolean;
+  enableDependencies: boolean;
 }
 
 export interface InstanceSettings {

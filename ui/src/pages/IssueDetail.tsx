@@ -276,7 +276,7 @@ export function IssueDetail() {
   const { data: dependencies } = useQuery({
     queryKey: queryKeys.issues.dependencies(issueId!),
     queryFn: () => issuesApi.listDependencies(issueId!),
-    enabled: !!issueId,
+    enabled: !!issueId && experimentalSettings?.enableDependencies === true,
   });
 
   const { data: attachments } = useQuery({
@@ -1417,8 +1417,8 @@ export function IssueDetail() {
         )}
       </Tabs>
 
-      {/* Dependencies (blockers) */}
-      {dependencies && dependencies.length > 0 && (
+      {/* Dependencies (blockers) — gated behind enableDependencies experimental flag */}
+      {experimentalSettings?.enableDependencies === true && dependencies && dependencies.length > 0 && (
         <Collapsible
           open={secondaryOpen.dependencies}
           onOpenChange={(open) => setSecondaryOpen((prev) => ({ ...prev, dependencies: open }))}
