@@ -3367,13 +3367,19 @@ export function heartbeatService(db: Db) {
               .returning()
               .then((rows) => rows[0] ?? activeExecutionRun);
 
+            const coalescedPayload = {
+              ...(payload ?? {}),
+              ...(reason && reason !== "issue_execution_same_name"
+                ? { coalescedOriginalReason: reason }
+                : {}),
+            };
             await tx.insert(agentWakeupRequests).values({
               companyId: agent.companyId,
               agentId,
               source,
               triggerDetail,
               reason: "issue_execution_same_name",
-              payload,
+              payload: coalescedPayload,
               status: "coalesced",
               coalescedCount: 1,
               requestedByActorType: opts.requestedByActorType ?? null,
