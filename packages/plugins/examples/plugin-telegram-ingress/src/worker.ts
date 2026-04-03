@@ -502,7 +502,7 @@ const plugin = definePlugin({
     return { status: "ok", message: "telegram-ingress ready" };
   },
 
-  async onValidateConfig(config) {
+  async onValidateConfig(config: unknown) {
     const cfg = config as Record<string, unknown>;
     const errors: string[] = [];
     if (!cfg.botTokenSecretRef || typeof cfg.botTokenSecretRef !== "string") {
