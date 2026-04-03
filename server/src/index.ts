@@ -756,6 +756,16 @@ function isMainModule(metaUrl: string): boolean {
 }
 
 if (isMainModule(import.meta.url)) {
+  process.on("uncaughtException", (err) => {
+    logger.fatal({ err }, "Uncaught exception — shutting down");
+    process.exit(1);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    logger.fatal({ err: reason }, "Unhandled promise rejection — shutting down");
+    process.exit(1);
+  });
+
   void startServer().catch((err) => {
     logger.error({ err }, "Paperclip server failed to start");
     process.exit(1);
