@@ -98,6 +98,15 @@ import {
   CommandEmpty,
   CommandSeparator,
 } from "@/components/ui/command";
+import { WorkflowDiagram } from "@/components/workflow/WorkflowDiagram";
+import { WorkflowStepTimeline } from "@/components/workflow/WorkflowStepTimeline";
+import {
+  MOCK_WORKFLOW_MERMAID,
+  MOCK_ONBOARDING_MERMAID,
+  MOCK_COMPLETED_RUN,
+  MOCK_ACTIVE_RUN,
+  MOCK_FAILED_RUN,
+} from "@/components/workflow/fixtures";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -1301,6 +1310,50 @@ export function DesignGuide() {
             );
           })}
         </div>
+      </Section>
+
+      {/* ============================================================ */}
+      {/*  WORKFLOW COMPONENTS                                          */}
+      {/* ============================================================ */}
+      <Section title="Workflow Components">
+        <p className="text-sm text-muted-foreground">
+          Presentational components for the workflow initiative. Driven by mocked fixture data.
+        </p>
+
+        <SubSection title="WorkflowDiagram — Task Execution">
+          <WorkflowDiagram
+            source={MOCK_WORKFLOW_MERMAID}
+            title="Task Execution Workflow"
+          />
+        </SubSection>
+
+        <SubSection title="WorkflowDiagram — Agent Onboarding">
+          <WorkflowDiagram
+            source={MOCK_ONBOARDING_MERMAID}
+            title="Agent Onboarding Workflow"
+          />
+        </SubSection>
+
+        <SubSection title="WorkflowStepTimeline — Completed Run">
+          <WorkflowStepTimeline
+            steps={MOCK_COMPLETED_RUN.steps}
+            currentStepId={MOCK_COMPLETED_RUN.currentStepId}
+          />
+        </SubSection>
+
+        <SubSection title="WorkflowStepTimeline — Active Run">
+          <WorkflowStepTimeline
+            steps={MOCK_ACTIVE_RUN.steps}
+            currentStepId={MOCK_ACTIVE_RUN.currentStepId}
+          />
+        </SubSection>
+
+        <SubSection title="WorkflowStepTimeline — Failed Run">
+          <WorkflowStepTimeline
+            steps={MOCK_FAILED_RUN.steps}
+            currentStepId={MOCK_FAILED_RUN.currentStepId}
+          />
+        </SubSection>
       </Section>
 
       {/* ============================================================ */}
