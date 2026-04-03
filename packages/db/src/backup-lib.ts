@@ -1,6 +1,6 @@
-import { createWriteStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import postgres from "postgres";
 
 export type RunDatabaseBackupOptions = {
@@ -626,14 +626,28 @@ export async function runDatabaseRestore(opts: RunDatabaseRestoreOptions): Promi
 
   try {
     await sql`SELECT 1`;
-    const contents = await readFile(opts.backupFile, "utf8");
-    const statements = contents
-      .split(STATEMENT_BREAKPOINT)
-      .map((statement) => statement.trim())
-      .filter((statement) => statement.length > 0);
 
-    for (const statement of statements) {
-      await sql.unsafe(statement).execute();
+    const fileStream = createReadStream(opts.backupFile, { encoding: "utf8" });
+    const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
+
+    let accumulatedLines: string[] = [];
+
+    for await (const line of rl) {
+      if (line === STATEMENT_BREAKPOINT) {
+        const statement = accumulatedLines.join("\n").trim();
+        accumulatedLines = [];
+        if (statement.length > 0) {
+          await sql.unsafe(statement).execute();
+        }
+      } else {
+        accumulatedLines.push(line);
+      }
+    }
+
+    // Execute any remaining statement after the last line
+    const remaining = accumulatedLines.join("\n").trim();
+    if (remaining.length > 0) {
+      await sql.unsafe(remaining).execute();
     }
   } catch (error) {
     const statementPreview = typeof error === "object" && error !== null && typeof (error as Record<string, unknown>).query === "string"
