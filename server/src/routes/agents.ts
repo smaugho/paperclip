@@ -22,6 +22,7 @@ import {
   updateAgentInstructionsPathSchema,
   wakeAgentSchema,
   updateAgentSchema,
+  INBOX_LITE_ISSUE_STATUS_FILTER,
 } from "@paperclipai/shared";
 import {
   readPaperclipSkillSyncPreference,
@@ -318,6 +319,23 @@ export function agentRoutes(db: Db) {
     if (!actorAgent || actorAgent.companyId !== targetAgent.companyId) {
       throw forbidden("Agent key cannot access another company");
     }
+  }
+
+  async function assertCanReadAgentInboxLite(req: Request, targetAgent: { id: string; companyId: string }) {
+    assertCompanyAccess(req, targetAgent.companyId);
+    if (req.actor.type === "board") return;
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+
+    const actorAgent = await svc.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== targetAgent.companyId) {
+      throw forbidden("Agent key cannot access another company");
+    }
+    if (actorAgent.id === targetAgent.id) return;
+
+    const chainOfCommand = await svc.getChainOfCommand(targetAgent.id);
+    if (chainOfCommand.some((manager) => manager.id === actorAgent.id)) return;
+
+    throw forbidden("Only the target agent or an ancestor manager can read this inbox");
   }
 
   async function resolveCompanyIdForAgentReference(req: Request): Promise<string | null> {
@@ -1062,7 +1080,7 @@ export function agentRoutes(db: Db) {
     const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       assigneeAgentId: req.actor.agentId,
-      status: "todo,in_progress,blocked",
+      status: INBOX_LITE_ISSUE_STATUS_FILTER,
     });
 
     res.json(
@@ -1096,6 +1114,38 @@ export function agentRoutes(db: Db) {
     });
 
     res.json(rows);
+  });
+
+  router.get("/agents/:id/inbox-lite", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    await assertCanReadAgentInboxLite(req, { id: agent.id, companyId: agent.companyId });
+
+    const issuesSvc = issueService(db);
+    const rows = await issuesSvc.list(agent.companyId, {
+      assigneeAgentId: agent.id,
+      status: INBOX_LITE_ISSUE_STATUS_FILTER,
+    });
+
+    res.json(
+      rows.map((issue) => ({
+        id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        status: issue.status,
+        priority: issue.priority,
+        projectId: issue.projectId,
+        goalId: issue.goalId,
+        parentId: issue.parentId,
+        updatedAt: issue.updatedAt,
+        activeRun: issue.activeRun,
+      })),
+    );
   });
 
   router.get("/agents/:id", async (req, res) => {
