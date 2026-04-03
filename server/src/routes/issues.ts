@@ -68,6 +68,15 @@ export function issueRoutes(db: Db, storage: StorageService) {
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
   });
 
+  async function assertDependenciesEnabled(res: Response): Promise<boolean> {
+    const { enableDependencies } = await instanceSettings.getExperimental();
+    if (!enableDependencies) {
+      res.status(403).json({ error: "Dependencies feature is not enabled. Enable the 'enableDependencies' experimental flag in instance settings." });
+      return false;
+    }
+    return true;
+  }
+
   async function assertWorkProductsEnabled(res: Response): Promise<boolean> {
     const { enableWorkProducts } = await instanceSettings.getExperimental();
     if (!enableWorkProducts) {
