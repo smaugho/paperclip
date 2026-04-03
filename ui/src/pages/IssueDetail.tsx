@@ -1731,26 +1731,6 @@ export function IssueDetail() {
             issueStatus={issue.status}
             agentMap={agentMap}
             currentUserId={currentUserId}
-            draftKey={`paperclip:issue-comment-draft:${issue.id}`}
-            enableReassign
-            reassignOptions={commentReassignOptions}
-            currentAssigneeValue={actualAssigneeValue}
-            suggestedAssigneeValue={suggestedAssigneeValue}
-            mentions={mentionOptions}
-            onInterruptQueued={async (runId) => {
-              await interruptQueuedComment.mutateAsync(runId);
-            }}
-            interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
-            onVote={async (commentId, vote, options) => {
-              await feedbackVoteMutation.mutateAsync({
-                targetType: "issue_comment",
-                targetId: commentId,
-                vote,
-                reason: options?.reason,
-                allowSharing: options?.allowSharing,
-                sharingPreferenceAtSubmit: feedbackDataSharingPreference,
-              });
-            }}
             onAdd={async (body, reopen, reassignment) => {
               if (reassignment) {
                 await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });
