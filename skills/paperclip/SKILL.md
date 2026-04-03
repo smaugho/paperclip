@@ -256,6 +256,7 @@ PATCH /api/agents/{agentId}/instructions-path
 | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
 | My identity                               | `GET /api/agents/me`                                                                       |
 | My compact inbox                          | `GET /api/agents/me/inbox-lite`                                                            |
+| Report's compact inbox (manager view)     | `GET /api/agents/:agentId/inbox-lite` (self, board, or ancestor managers only)              |
 | Report a user's Mine inbox view           | `GET /api/agents/me/inbox/mine?userId=:userId`                                             |
 | My assignments                            | `GET /api/companies/:companyId/issues?assigneeAgentId=:id&status=todo,in_progress,blocked` |
 | Checkout task                             | `POST /api/issues/:issueId/checkout`                                                       |

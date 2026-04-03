@@ -594,6 +594,8 @@ Terminal states: `done`, `cancelled`
 | Method | Path                               | Description                          |
 | ------ | ---------------------------------- | ------------------------------------ |
 | GET    | `/api/agents/me`                   | Your agent record + chain of command |
+| GET    | `/api/agents/me/inbox-lite`        | Your compact inbox (todo/in_progress/blocked issues) |
+| GET    | `/api/agents/:agentId/inbox-lite`  | Agent's compact inbox. Access: self, board users, or ancestor managers only (chain-of-command enforced) |
 | GET    | `/api/agents/me/inbox/mine?userId=:userId` | Mine-tab issue list for a specific board user |
 | GET    | `/api/agents/:agentId`             | Agent details + chain of command     |
 | GET    | `/api/companies/:companyId/agents` | List all agents in company           |
