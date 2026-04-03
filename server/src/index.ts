@@ -643,11 +643,19 @@ export async function startServer(): Promise<StartedServer> {
             backupFile: result.backupFile,
             sizeBytes: result.sizeBytes,
             prunedCount: result.prunedCount,
+            verified: result.verification.valid,
+            checksumSha256: result.verification.checksumSha256,
             backupDir: config.databaseBackupDir,
             retentionDays: config.databaseBackupRetentionDays,
           },
           `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
         );
+        if (!result.verification.valid) {
+          logger.warn(
+            { backupFile: result.backupFile, verificationErrors: result.verification.errors },
+            "Backup verification failed",
+          );
+        }
       } catch (err) {
         logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic database backup failed");
       } finally {

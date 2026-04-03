@@ -20,7 +20,9 @@ export {
 export {
   runDatabaseBackup,
   runDatabaseRestore,
+  verifyBackupFile,
   formatDatabaseBackupResult,
+  type BackupVerificationResult,
   type RunDatabaseBackupOptions,
   type RunDatabaseBackupResult,
   type RunDatabaseRestoreOptions,

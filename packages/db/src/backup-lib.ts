@@ -1,5 +1,6 @@
-import { createWriteStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import postgres from "postgres";
 
@@ -14,10 +15,17 @@ export type RunDatabaseBackupOptions = {
   nullifyColumns?: Record<string, string[]>;
 };
 
+export type BackupVerificationResult = {
+  checksumSha256: string;
+  valid: boolean;
+  errors: string[];
+};
+
 export type RunDatabaseBackupResult = {
   backupFile: string;
   sizeBytes: number;
   prunedCount: number;
+  verification: BackupVerificationResult;
 };
 
 export type RunDatabaseRestoreOptions = {
@@ -87,6 +95,64 @@ function pruneOldBackups(backupDir: string, retentionDays: number, filenamePrefi
   }
 
   return pruned;
+}
+
+export async function verifyBackupFile(filePath: string): Promise<BackupVerificationResult> {
+  const errors: string[] = [];
+
+  // Compute SHA-256 checksum via streaming to avoid loading large files into memory.
+  const checksumSha256 = await new Promise<string>((resolve, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
+
+  // Write sidecar checksum file.
+  const checksumFile = `${filePath}.sha256`;
+  await writeFile(checksumFile, `${checksumSha256}  ${basename(filePath)}\n`, "utf8");
+
+  // Structural validation: read file and check SQL structure.
+  const contents = await readFile(filePath, "utf8");
+
+  if (contents.length === 0) {
+    errors.push("Backup file is empty");
+    return { checksumSha256, valid: false, errors };
+  }
+
+  if (!contents.startsWith("-- Paperclip database backup")) {
+    errors.push("Missing expected header: '-- Paperclip database backup'");
+  }
+
+  if (!contents.includes("BEGIN;")) {
+    errors.push("Missing BEGIN statement");
+  }
+
+  if (!contents.includes("COMMIT;")) {
+    errors.push("Missing COMMIT statement — backup may be truncated");
+  }
+
+  if (!contents.includes(STATEMENT_BREAKPOINT)) {
+    errors.push("No statement breakpoints found — file may not be a valid Paperclip backup");
+  }
+
+  if (!contents.includes("CREATE TABLE")) {
+    errors.push("No CREATE TABLE statements found — backup contains no tables");
+  }
+
+  // Check that COMMIT is near the end (not followed by substantial non-whitespace content).
+  const lastCommitIndex = contents.lastIndexOf("COMMIT;");
+  if (lastCommitIndex >= 0) {
+    const afterCommit = contents.slice(lastCommitIndex + "COMMIT;".length).trim();
+    // After COMMIT we expect only the statement breakpoint and trailing whitespace.
+    const stripped = afterCommit.replace(new RegExp(STATEMENT_BREAKPOINT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "").trim();
+    if (stripped.length > 0) {
+      errors.push("Unexpected content after COMMIT — backup may contain extraneous data");
+    }
+  }
+
+  return { checksumSha256, valid: errors.length === 0, errors };
 }
 
 function formatBackupSize(sizeBytes: number): string {
@@ -605,12 +671,14 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     await writer.close();
 
     const sizeBytes = statSync(backupFile).size;
+    const verification = await verifyBackupFile(backupFile);
     const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
 
     return {
       backupFile,
       sizeBytes,
       prunedCount,
+      verification,
     };
   } catch (error) {
     await writer.abort();
@@ -653,5 +721,6 @@ export async function runDatabaseRestore(opts: RunDatabaseRestoreOptions): Promi
 export function formatDatabaseBackupResult(result: RunDatabaseBackupResult): string {
   const size = formatBackupSize(result.sizeBytes);
   const pruned = result.prunedCount > 0 ? `; pruned ${result.prunedCount} old backup(s)` : "";
-  return `${result.backupFile} (${size}${pruned})`;
+  const verified = result.verification.valid ? "; verified" : `; VERIFICATION FAILED: ${result.verification.errors.join(", ")}`;
+  return `${result.backupFile} (${size}${pruned}${verified})`;
 }

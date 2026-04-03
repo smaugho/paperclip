@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import postgres from "postgres";
-import { createBufferedTextFileWriter, runDatabaseBackup, runDatabaseRestore } from "./backup-lib.js";
+import { createBufferedTextFileWriter, runDatabaseBackup, runDatabaseRestore, verifyBackupFile } from "./backup-lib.js";
 import { ensurePostgresDatabase } from "./client.js";
 import {
   getEmbeddedPostgresTestSupport,
@@ -73,6 +73,63 @@ describe("createBufferedTextFileWriter", () => {
   });
 });
 
+describe("verifyBackupFile", () => {
+  it("reports errors for an empty file", async () => {
+    const tempDir = createTempDir("paperclip-verify-empty-");
+    const emptyFile = path.join(tempDir, "empty.sql");
+    fs.writeFileSync(emptyFile, "");
+    const result = await verifyBackupFile(emptyFile);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Backup file is empty");
+    expect(result.checksumSha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("reports errors for a truncated backup missing COMMIT", async () => {
+    const tempDir = createTempDir("paperclip-verify-truncated-");
+    const truncatedFile = path.join(tempDir, "truncated.sql");
+    fs.writeFileSync(
+      truncatedFile,
+      [
+        "-- Paperclip database backup",
+        "-- Created: 2026-01-01T00:00:00.000Z",
+        "",
+        "BEGIN;",
+        "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900",
+        'CREATE TABLE "public"."test" ("id" serial PRIMARY KEY);',
+        "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900",
+      ].join("\n"),
+    );
+    const result = await verifyBackupFile(truncatedFile);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Missing COMMIT statement — backup may be truncated");
+  });
+
+  it("passes for a well-formed backup file", async () => {
+    const tempDir = createTempDir("paperclip-verify-valid-");
+    const validFile = path.join(tempDir, "valid.sql");
+    fs.writeFileSync(
+      validFile,
+      [
+        "-- Paperclip database backup",
+        "-- Created: 2026-01-01T00:00:00.000Z",
+        "",
+        "BEGIN;",
+        "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900",
+        'CREATE TABLE "public"."test" ("id" serial PRIMARY KEY);',
+        "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900",
+        "COMMIT;",
+        "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900",
+        "",
+      ].join("\n"),
+    );
+    const result = await verifyBackupFile(validFile);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+    // Sidecar checksum file should be created.
+    expect(fs.existsSync(`${validFile}.sha256`)).toBe(true);
+  });
+});
+
 describeEmbeddedPostgres("runDatabaseBackup", () => {
   it(
     "backs up and restores large table payloads without materializing one giant string",
@@ -132,6 +189,17 @@ describeEmbeddedPostgres("runDatabaseBackup", () => {
         expect(result.backupFile).toMatch(/paperclip-test-.*\.sql$/);
         expect(result.sizeBytes).toBeGreaterThan(1024 * 1024);
         expect(fs.existsSync(result.backupFile)).toBe(true);
+
+        // Verification should pass for a valid backup.
+        expect(result.verification.valid).toBe(true);
+        expect(result.verification.errors).toEqual([]);
+        expect(result.verification.checksumSha256).toMatch(/^[a-f0-9]{64}$/);
+
+        // Sidecar checksum file should exist.
+        const checksumFilePath = `${result.backupFile}.sha256`;
+        expect(fs.existsSync(checksumFilePath)).toBe(true);
+        const checksumContent = fs.readFileSync(checksumFilePath, "utf8");
+        expect(checksumContent).toContain(result.verification.checksumSha256);
 
         await runDatabaseRestore({
           connectionString: restoreConnectionString,

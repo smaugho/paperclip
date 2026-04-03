@@ -85,6 +85,7 @@ export async function dbBackupCommand(opts: DbBackupOptions): Promise<void> {
             backupFile: result.backupFile,
             sizeBytes: result.sizeBytes,
             prunedCount: result.prunedCount,
+            verification: result.verification,
             backupDir,
             retentionDays,
             connectionSource: connection.source,
