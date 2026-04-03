@@ -374,4 +374,132 @@ describe("GET /api/agents/:id/inbox-lite", () => {
     expect(res.status).toBe(401);
     expect(mockIssueService.list).not.toHaveBeenCalled();
   });
+
+  it("manager reads multiple direct reports' inboxes in sequence without false-empty results", async () => {
+    const reportIds = [
+      "aaaa1111-1111-4111-8111-111111111111",
+      "aaaa2222-2222-4222-8222-222222222222",
+      "aaaa3333-3333-4333-8333-333333333333",
+      "aaaa4444-4444-4444-8444-444444444444",
+    ];
+    const reportAgents = reportIds.map((id, i) => ({
+      ...baseAgent,
+      id,
+      name: `Report${i + 1}`,
+      urlKey: `report${i + 1}`,
+      reportsTo: managerId,
+    }));
+
+    const issuesPerReport: Record<string, typeof sampleIssues> = {};
+    for (const [i, id] of reportIds.entries()) {
+      issuesPerReport[id] = [
+        {
+          id: `issue-${id}`,
+          identifier: `DSPA-${200 + i}`,
+          title: `Task for report ${i + 1}`,
+          status: "todo",
+          priority: "high",
+          projectId: null,
+          goalId: "goal-1",
+          parentId: null,
+          updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+          activeRun: null,
+        },
+      ];
+    }
+
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === managerId) return managerAgent;
+      const report = reportAgents.find((r) => r.id === id);
+      if (report) return report;
+      return null;
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerId, name: "Manager", role: "general", title: "Technical Lead" },
+    ]);
+    mockIssueService.list.mockImplementation(async (_companyId: string, filters: { assigneeAgentId?: string }) => {
+      return issuesPerReport[filters.assigneeAgentId ?? ""] ?? [];
+    });
+
+    const app = createApp({
+      type: "agent",
+      agentId: managerId,
+      companyId,
+      runId: "run-mgr-multi",
+      source: "agent_key",
+    });
+
+    // Call inbox-lite for each report sequentially (matches TL heartbeat pattern)
+    for (const [i, id] of reportIds.entries()) {
+      const res = await request(app).get(`/api/agents/${id}/inbox-lite`);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].identifier).toBe(`DSPA-${200 + i}`);
+    }
+
+    // Verify issueService.list was called with the correct assigneeAgentId for each report
+    expect(mockIssueService.list).toHaveBeenCalledTimes(4);
+    for (const id of reportIds) {
+      expect(mockIssueService.list).toHaveBeenCalledWith(companyId, {
+        assigneeAgentId: id,
+        status: "todo,in_progress,blocked",
+      });
+    }
+  });
+
+  it("/:id route and /me route pass the same query parameters to issueService.list", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      runId: "run-self",
+      source: "agent_key",
+    });
+
+    // Call /me/inbox-lite
+    const meRes = await request(app).get("/api/agents/me/inbox-lite");
+    expect(meRes.status).toBe(200);
+
+    const meCallArgs = mockIssueService.list.mock.calls[0];
+
+    // Reset and call /:id/inbox-lite
+    mockIssueService.list.mockClear();
+    mockIssueService.list.mockResolvedValue(sampleIssues);
+
+    const idRes = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
+    expect(idRes.status).toBe(200);
+
+    const idCallArgs = mockIssueService.list.mock.calls[0];
+
+    // Both routes must call issueService.list with identical arguments
+    expect(meCallArgs).toEqual(idCallArgs);
+    // Both routes must return the same response body shape and values
+    expect(meRes.body).toEqual(idRes.body);
+  });
+
+  it("manager reading report inbox-lite returns non-empty when report has issues", async () => {
+    // This test specifically guards against the false-empty regression where
+    // manager access checks pass but the issue query returns no results.
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerId, name: "Manager", role: "general", title: "Technical Lead" },
+    ]);
+    // Ensure issueService.list returns data
+    mockIssueService.list.mockResolvedValue(sampleIssues);
+
+    const app = createApp({
+      type: "agent",
+      agentId: managerId,
+      companyId,
+      runId: "run-mgr",
+      source: "agent_key",
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
+
+    expect(res.status).toBe(200);
+    // The critical assertion: if issueService.list returns data, the response
+    // must also contain data (not be silently emptied or swallowed)
+    expect(res.body.length).toBe(sampleIssues.length);
+    expect(res.body.map((i: { id: string }) => i.id)).toEqual(sampleIssues.map((i) => i.id));
+  });
 });
