@@ -22,6 +22,7 @@ import {
   updateAgentInstructionsPathSchema,
   wakeAgentSchema,
   updateAgentSchema,
+  INBOX_LITE_ISSUE_STATUS_FILTER,
 } from "@paperclipai/shared";
 import {
   readPaperclipSkillSyncPreference,
@@ -1005,7 +1006,7 @@ export function agentRoutes(db: Db) {
     const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       assigneeAgentId: req.actor.agentId,
-      status: "todo,in_progress,blocked",
+      status: INBOX_LITE_ISSUE_STATUS_FILTER,
     });
 
     res.json(
@@ -1054,7 +1055,7 @@ export function agentRoutes(db: Db) {
     const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(agent.companyId, {
       assigneeAgentId: agent.id,
-      status: "todo,in_progress,blocked",
+      status: INBOX_LITE_ISSUE_STATUS_FILTER,
     });
 
     res.json(

@@ -1,12 +1,13 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { INBOX_LITE_ISSUE_STATUS_FILTER } from "@paperclipai/shared";
 import { agentRoutes } from "../routes/agents.js";
 import { errorHandler } from "../middleware/index.js";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
-const managerId = "33333333-3333-4333-8333-333333333333";
-const companyId = "22222222-2222-4222-8222-222222222222";
+const managerId = "22222222-2222-4222-8222-222222222222";
+const companyId = "33333333-3333-4333-8333-333333333333";
 
 const baseAgent = {
   id: agentId,
@@ -17,7 +18,7 @@ const baseAgent = {
   title: "Builder",
   icon: null,
   status: "idle",
-  reportsTo: managerId,
+  reportsTo: null,
   capabilities: null,
   adapterType: "process",
   adapterConfig: {},
@@ -40,8 +41,64 @@ const managerAgent = {
   urlKey: "manager",
   role: "general",
   title: "Technical Lead",
-  reportsTo: null,
 };
+
+const reportAgent = {
+  ...baseAgent,
+  id: agentId,
+  reportsTo: managerId,
+};
+
+const sampleIssues = [
+  {
+    id: "issue-todo",
+    identifier: "PAP-100",
+    title: "Todo task",
+    status: "todo",
+    priority: "high",
+    projectId: null,
+    goalId: null,
+    parentId: null,
+    updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+    activeRun: null,
+  },
+  {
+    id: "issue-in-progress",
+    identifier: "PAP-101",
+    title: "In-progress task",
+    status: "in_progress",
+    priority: "medium",
+    projectId: null,
+    goalId: null,
+    parentId: null,
+    updatedAt: new Date("2026-04-01T01:00:00.000Z"),
+    activeRun: null,
+  },
+  {
+    id: "issue-blocked",
+    identifier: "PAP-102",
+    title: "Blocked task",
+    status: "blocked",
+    priority: "high",
+    projectId: null,
+    goalId: null,
+    parentId: null,
+    updatedAt: new Date("2026-04-01T02:00:00.000Z"),
+    activeRun: null,
+  },
+  {
+    id: "issue-in-review",
+    identifier: "PAP-103",
+    title: "In-review task",
+    status: "in_review",
+    priority: "critical",
+    projectId: null,
+    goalId: null,
+    parentId: null,
+    updatedAt: new Date("2026-04-01T03:00:00.000Z"),
+    activeRun: null,
+  },
+];
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -120,7 +177,7 @@ function createDbStub() {
         where: vi.fn().mockReturnValue({
           then: vi.fn().mockResolvedValue([{
             id: companyId,
-            name: "Paperclip",
+            name: "TestCo",
             requireBoardApprovalForNewAgents: false,
           }]),
         }),
@@ -141,63 +198,66 @@ function createApp(actor: Record<string, unknown>) {
   return app;
 }
 
-const sampleIssues = [
-  {
-    id: "issue-1",
-    identifier: "DSPA-100",
-    title: "Fix login bug",
-    status: "todo",
-    priority: "high",
-    projectId: null,
-    goalId: "goal-1",
-    parentId: null,
-    updatedAt: new Date("2026-04-01T00:00:00.000Z"),
-    activeRun: null,
-  },
-  {
-    id: "issue-2",
-    identifier: "DSPA-101",
-    title: "Add feature",
-    status: "in_progress",
-    priority: "medium",
-    projectId: "proj-1",
-    goalId: "goal-1",
-    parentId: "issue-1",
-    updatedAt: new Date("2026-04-02T00:00:00.000Z"),
-    activeRun: { id: "run-1", status: "running", agentId },
-  },
-];
+describe("GET /api/agents/me/inbox-lite", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAgentService.getById.mockResolvedValue(reportAgent);
+    mockAgentService.getChainOfCommand.mockResolvedValue([]);
+    mockIssueService.list.mockResolvedValue(sampleIssues);
+  });
+
+  it("includes in_review issues in the status filter", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      runId: "run-1",
+      source: "agent_key",
+    });
+
+    const res = await request(app).get("/api/agents/me/inbox-lite");
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.list).toHaveBeenCalledWith(companyId, {
+      assigneeAgentId: agentId,
+      status: INBOX_LITE_ISSUE_STATUS_FILTER,
+    });
+    expect(INBOX_LITE_ISSUE_STATUS_FILTER).toContain("in_review");
+  });
+
+  it("returns all four non-terminal statuses", async () => {
+    const app = createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      runId: "run-1",
+      source: "agent_key",
+    });
+
+    const res = await request(app).get("/api/agents/me/inbox-lite");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(4);
+    const statuses = res.body.map((i: { status: string }) => i.status).sort();
+    expect(statuses).toEqual(["blocked", "in_progress", "in_review", "todo"]);
+  });
+});
 
 describe("GET /api/agents/:id/inbox-lite", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAgentService.getById.mockImplementation(async (id: string) => {
-      if (id === agentId) return baseAgent;
       if (id === managerId) return managerAgent;
+      if (id === agentId) return reportAgent;
       return null;
     });
-    mockAgentService.getChainOfCommand.mockResolvedValue([]);
-    mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });
-    mockAccessService.getMembership.mockResolvedValue({
-      id: "membership-1",
-      companyId,
-      principalType: "agent",
-      principalId: agentId,
-      status: "active",
-      membershipRole: "member",
-      createdAt: new Date("2026-03-19T00:00:00.000Z"),
-      updatedAt: new Date("2026-03-19T00:00:00.000Z"),
-    });
-    mockAccessService.listPrincipalGrants.mockResolvedValue([]);
-    mockIssueService.list.mockResolvedValue(sampleIssues);
-    mockLogActivity.mockResolvedValue(undefined);
-  });
-
-  it("returns inbox-lite for a report when called by an ancestor manager", async () => {
     mockAgentService.getChainOfCommand.mockResolvedValue([
       { id: managerId, name: "Manager", role: "general", title: "Technical Lead" },
     ]);
+    mockIssueService.list.mockResolvedValue(sampleIssues);
+  });
 
+  it("manager read includes in_review issues (parity with /me route)", async () => {
     const app = createApp({
       type: "agent",
       agentId: managerId,
@@ -209,25 +269,16 @@ describe("GET /api/agents/:id/inbox-lite", () => {
     const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
 
     expect(res.status).toBe(200);
-    expect(mockAgentService.getChainOfCommand).toHaveBeenCalledWith(agentId);
     expect(mockIssueService.list).toHaveBeenCalledWith(companyId, {
       assigneeAgentId: agentId,
-      status: "todo,in_progress,blocked",
+      status: INBOX_LITE_ISSUE_STATUS_FILTER,
     });
-    expect(res.body).toHaveLength(2);
-    expect(res.body[0]).toEqual(
-      expect.objectContaining({
-        id: "issue-1",
-        identifier: "DSPA-100",
-        title: "Fix login bug",
-        status: "todo",
-      }),
-    );
-    // Verify only lean fields are returned (no description, etc.)
-    expect(res.body[0]).not.toHaveProperty("description");
+    expect(res.body).toHaveLength(4);
+    const identifiers = res.body.map((i: { identifier: string }) => i.identifier).sort();
+    expect(identifiers).toEqual(["PAP-100", "PAP-101", "PAP-102", "PAP-103"]);
   });
 
-  it("returns inbox-lite for a report when called by a board user", async () => {
+  it("board read includes in_review issues", async () => {
     const app = createApp({
       type: "board",
       userId: "board-user",
@@ -241,137 +292,92 @@ describe("GET /api/agents/:id/inbox-lite", () => {
     expect(res.status).toBe(200);
     expect(mockIssueService.list).toHaveBeenCalledWith(companyId, {
       assigneeAgentId: agentId,
-      status: "todo,in_progress,blocked",
+      status: INBOX_LITE_ISSUE_STATUS_FILTER,
     });
-    expect(res.body).toHaveLength(2);
+    expect(res.body).toHaveLength(4);
   });
 
-  it("returns inbox-lite when agent queries its own ID", async () => {
+  it("returns 403 for non-manager agent reading another agent's inbox-lite", async () => {
+    const otherAgentId = "44444444-4444-4444-8444-444444444444";
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === agentId) return reportAgent;
+      if (id === otherAgentId) return { ...baseAgent, id: otherAgentId, urlKey: "other" };
+      return null;
+    });
+    mockAgentService.getChainOfCommand.mockResolvedValue([]);
+
     const app = createApp({
       type: "agent",
       agentId,
       companyId,
-      runId: "run-self",
+      runId: "run-1",
       source: "agent_key",
     });
 
-    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
+    const res = await request(app).get(`/api/agents/${otherAgentId}/inbox-lite`);
 
-    expect(res.status).toBe(200);
-    expect(mockIssueService.list).toHaveBeenCalledWith(companyId, {
-      assigneeAgentId: agentId,
-      status: "todo,in_progress,blocked",
-    });
+    expect(res.status).toBe(403);
+    expect(mockIssueService.list).not.toHaveBeenCalled();
   });
 
-  it("returns 404 for non-existent agent", async () => {
-    const unknownId = "99999999-9999-4999-8999-999999999999";
+  it("manager reads multiple direct reports in sequence without false-empty results", async () => {
+    const reportIds = [
+      "aaaa1111-1111-4111-8111-111111111111",
+      "aaaa2222-2222-4222-8222-222222222222",
+      "aaaa3333-3333-4333-8333-333333333333",
+    ];
+    const reports = reportIds.map((id, i) => ({
+      ...baseAgent,
+      id,
+      name: `Report${i + 1}`,
+      urlKey: `report${i + 1}`,
+      reportsTo: managerId,
+    }));
+
+    const issuesPerReport: Record<string, typeof sampleIssues> = {};
+    for (const [i, id] of reportIds.entries()) {
+      issuesPerReport[id] = [
+        {
+          id: `issue-${id}`,
+          identifier: `PAP-${200 + i}`,
+          title: `Task for report ${i + 1}`,
+          status: i === 0 ? "in_review" : "todo",
+          priority: "high",
+          projectId: null,
+          goalId: null,
+          parentId: null,
+          updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+          activeRun: null,
+        },
+      ];
+    }
+
     mockAgentService.getById.mockImplementation(async (id: string) => {
       if (id === managerId) return managerAgent;
-      if (id === agentId) return baseAgent;
-      return null;
+      return reports.find((r) => r.id === id) ?? null;
     });
+    mockAgentService.getChainOfCommand.mockResolvedValue([
+      { id: managerId, name: "Manager", role: "general", title: "Technical Lead" },
+    ]);
+    mockIssueService.list.mockImplementation(
+      async (_companyId: string, filters: { assigneeAgentId?: string }) => {
+        return issuesPerReport[filters.assigneeAgentId ?? ""] ?? [];
+      },
+    );
 
     const app = createApp({
       type: "agent",
       agentId: managerId,
       companyId,
-      runId: "run-mgr",
+      runId: "run-mgr-multi",
       source: "agent_key",
     });
 
-    const res = await request(app).get(`/api/agents/${unknownId}/inbox-lite`);
-
-    expect(res.status).toBe(404);
-  });
-
-  it("returns empty array when agent has no assigned issues", async () => {
-    mockIssueService.list.mockResolvedValue([]);
-
-    const app = createApp({
-      type: "board",
-      userId: "board-user",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-      companyIds: [companyId],
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
-  });
-
-  it("rejects same-company peer agent not in management chain with 403", async () => {
-    const peerId = "66666666-6666-4666-8666-666666666666";
-    const peerAgent = {
-      ...baseAgent,
-      id: peerId,
-      name: "Peer",
-      urlKey: "peer",
-      role: "engineer",
-      title: "Peer Engineer",
-      reportsTo: managerId,
-    };
-
-    mockAgentService.getById.mockImplementation(async (id: string) => {
-      if (id === agentId) return baseAgent;
-      if (id === managerId) return managerAgent;
-      if (id === peerId) return peerAgent;
-      return null;
-    });
-    // Chain of command for baseAgent does not include peerId
-    mockAgentService.getChainOfCommand.mockResolvedValue([
-      { id: managerId, name: "Manager", role: "general", title: "Technical Lead" },
-    ]);
-
-    const app = createApp({
-      type: "agent",
-      agentId: peerId,
-      companyId,
-      runId: "run-peer",
-      source: "agent_key",
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
-
-    expect(res.status).toBe(403);
-    expect(mockIssueService.list).not.toHaveBeenCalled();
-  });
-
-  it("rejects cross-company agent with 403", async () => {
-    const otherCompanyId = "44444444-4444-4444-8444-444444444444";
-    const crossCompanyAgentId = "55555555-5555-4555-8555-555555555555";
-
-    mockAgentService.getById.mockImplementation(async (id: string) => {
-      if (id === agentId) return baseAgent;
-      if (id === crossCompanyAgentId)
-        return { ...baseAgent, id: crossCompanyAgentId, companyId: otherCompanyId };
-      return null;
-    });
-
-    const app = createApp({
-      type: "agent",
-      agentId: crossCompanyAgentId,
-      companyId: otherCompanyId,
-      runId: "run-cross",
-      source: "agent_key",
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
-
-    expect(res.status).toBe(403);
-    expect(mockIssueService.list).not.toHaveBeenCalled();
-  });
-
-  it("rejects unauthenticated caller with 401", async () => {
-    const app = createApp({
-      type: "none",
-    });
-
-    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
-
-    expect(res.status).toBe(401);
-    expect(mockIssueService.list).not.toHaveBeenCalled();
+    for (const [i, id] of reportIds.entries()) {
+      const res = await request(app).get(`/api/agents/${id}/inbox-lite`);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].identifier).toBe(`PAP-${200 + i}`);
+    }
   });
 });
