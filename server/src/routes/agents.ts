@@ -253,6 +253,23 @@ export function agentRoutes(db: Db) {
     }
   }
 
+  async function assertCanReadAgentInboxLite(req: Request, targetAgent: { id: string; companyId: string }) {
+    assertCompanyAccess(req, targetAgent.companyId);
+    if (req.actor.type === "board") return;
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+
+    const actorAgent = await svc.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.companyId !== targetAgent.companyId) {
+      throw forbidden("Agent key cannot access another company");
+    }
+    if (actorAgent.id === targetAgent.id) return;
+
+    const chainOfCommand = await svc.getChainOfCommand(targetAgent.id);
+    if (chainOfCommand.some((manager) => manager.id === actorAgent.id)) return;
+
+    throw forbidden("Only the target agent or an ancestor manager can read this inbox");
+  }
+
   async function resolveCompanyIdForAgentReference(req: Request): Promise<string | null> {
     const companyIdQuery = req.query.companyId;
     const requestedCompanyId =
@@ -1026,13 +1043,13 @@ export function agentRoutes(db: Db) {
   });
 
   router.get("/agents/:id/inbox-lite", async (req, res) => {
-    const id = await normalizeAgentReference(req, req.params.id as string);
+    const id = req.params.id as string;
     const agent = await svc.getById(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    await assertCanReadAgent(req, agent);
+    await assertCanReadAgentInboxLite(req, { id: agent.id, companyId: agent.companyId });
 
     const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(agent.companyId, {
