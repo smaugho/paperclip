@@ -7,6 +7,7 @@ import {
   companies,
   createDb,
   executionWorkspaces,
+  heartbeatRuns,
   instanceSettings,
   issueComments,
   issueInboxArchives,
@@ -950,5 +951,168 @@ describeEmbeddedPostgres("issueService.addComment Board Comments auto-label", ()
     const issueLabelNames = await getIssueLabels(issue.id);
     const names = issueLabelNames.map((l) => l.labelName).sort();
     expect(names).toEqual(["Board Comments", "Bug"]);
+  });
+});
+
+describeEmbeddedPostgres("issueService stale executionRun-only same-agent adoption", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-exec-run-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(issueComments);
+    await db.delete(issueInboxArchives);
+    await db.delete(activityLog);
+    await db.delete(issues);
+    await db.delete(heartbeatRuns);
+    await db.delete(executionWorkspaces);
+    await db.delete(projectWorkspaces);
+    await db.delete(projects);
+    await db.delete(agents);
+    await db.delete(instanceSettings);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  async function seedCompanyAndAgent() {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "TestCo",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "test-agent",
+      adapterType: "claude_local",
+      role: "general",
+    });
+    return { companyId, agentId };
+  }
+
+  async function seedRun(companyId: string, agentId: string, status: string) {
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status,
+    });
+    return runId;
+  }
+
+  it("checkout adopts when checkoutRunId is null and executionRunId is a terminal run from the same agent", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const staleRunId = await seedRun(companyId, agentId, "succeeded");
+    const newRunId = await seedRun(companyId, agentId, "running");
+
+    // Create an issue in_progress assigned to the agent, checkoutRunId=null, executionRunId=staleRun
+    const [issue] = await db
+      .insert(issues)
+      .values({
+        companyId,
+        title: "test-exec-only",
+        status: "in_progress",
+        assigneeAgentId: agentId,
+        checkoutRunId: null,
+        executionRunId: staleRunId,
+        executionLockedAt: new Date(),
+        issueNumber: 1,
+        identifier: `TEST-1`,
+      })
+      .returning();
+
+    // The new run should be able to checkout without 409
+    const result = await svc.checkout(issue.id, agentId, ["todo", "backlog", "blocked", "in_progress"], newRunId);
+    expect(result).toBeTruthy();
+    expect(result.checkoutRunId).toBe(newRunId);
+    expect(result.executionRunId).toBe(newRunId);
+  });
+
+  it("assertCheckoutOwner adopts when checkoutRunId is null and executionRunId is a terminal run from the same agent", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const staleRunId = await seedRun(companyId, agentId, "failed");
+    const newRunId = await seedRun(companyId, agentId, "running");
+
+    const [issue] = await db
+      .insert(issues)
+      .values({
+        companyId,
+        title: "test-exec-only-assert",
+        status: "in_progress",
+        assigneeAgentId: agentId,
+        checkoutRunId: null,
+        executionRunId: staleRunId,
+        executionLockedAt: new Date(),
+        issueNumber: 2,
+        identifier: `TEST-2`,
+      })
+      .returning();
+
+    const result = await svc.assertCheckoutOwner(issue.id, agentId, newRunId);
+    expect(result).toBeTruthy();
+    expect(result.adoptedFromRunId).toBe(staleRunId);
+  });
+
+  it("checkout rejects when checkoutRunId is null and executionRunId is a live run from the same agent", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const liveRunId = await seedRun(companyId, agentId, "running");
+    const newRunId = await seedRun(companyId, agentId, "running");
+
+    const [issue] = await db
+      .insert(issues)
+      .values({
+        companyId,
+        title: "test-exec-only-live",
+        status: "in_progress",
+        assigneeAgentId: agentId,
+        checkoutRunId: null,
+        executionRunId: liveRunId,
+        executionLockedAt: new Date(),
+        issueNumber: 3,
+        identifier: `TEST-3`,
+      })
+      .returning();
+
+    await expect(
+      svc.checkout(issue.id, agentId, ["todo", "backlog", "blocked", "in_progress"], newRunId),
+    ).rejects.toThrow(/conflict/i);
+  });
+
+  it("assertCheckoutOwner rejects when checkoutRunId is null and executionRunId is a live run from the same agent", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const liveRunId = await seedRun(companyId, agentId, "running");
+    const newRunId = await seedRun(companyId, agentId, "running");
+
+    const [issue] = await db
+      .insert(issues)
+      .values({
+        companyId,
+        title: "test-exec-only-live-assert",
+        status: "in_progress",
+        assigneeAgentId: agentId,
+        checkoutRunId: null,
+        executionRunId: liveRunId,
+        executionLockedAt: new Date(),
+        issueNumber: 4,
+        identifier: `TEST-4`,
+      })
+      .returning();
+
+    await expect(
+      svc.assertCheckoutOwner(issue.id, agentId, newRunId),
+    ).rejects.toThrow(/conflict/i);
   });
 });

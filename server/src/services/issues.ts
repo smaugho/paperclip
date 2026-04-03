@@ -696,6 +696,51 @@ export function issueService(db: Db) {
     return adopted;
   }
 
+  /**
+   * Adopt an issue whose checkoutRunId is null but executionRunId still
+   * references a terminal (stale) run from the same agent.  This closes
+   * the gap where a previous run set executionRunId but never acquired
+   * (or already released) the checkout lock.
+   */
+  async function adoptStaleExecutionRun(input: {
+    issueId: string;
+    actorAgentId: string;
+    actorRunId: string;
+    expectedExecutionRunId: string;
+  }) {
+    const stale = await isTerminalOrMissingHeartbeatRun(input.expectedExecutionRunId);
+    if (!stale) return null;
+
+    const now = new Date();
+    const adopted = await db
+      .update(issues)
+      .set({
+        checkoutRunId: input.actorRunId,
+        executionRunId: input.actorRunId,
+        executionLockedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(issues.id, input.issueId),
+          eq(issues.status, "in_progress"),
+          eq(issues.assigneeAgentId, input.actorAgentId),
+          isNull(issues.checkoutRunId),
+          eq(issues.executionRunId, input.expectedExecutionRunId),
+        ),
+      )
+      .returning({
+        id: issues.id,
+        status: issues.status,
+        assigneeAgentId: issues.assigneeAgentId,
+        checkoutRunId: issues.checkoutRunId,
+        executionRunId: issues.executionRunId,
+      })
+      .then((rows) => rows[0] ?? null);
+
+    return adopted;
+  }
+
   return {
     list: async (companyId: string, filters?: IssueFilters) => {
       const conditions = [eq(issues.companyId, companyId)];
@@ -1364,6 +1409,28 @@ export function issueService(db: Db) {
         if (adopted) return adopted;
       }
 
+      // checkoutRunId is null but executionRunId holds a stale run from the same agent
+      if (
+        checkoutRunId &&
+        current.assigneeAgentId === agentId &&
+        current.status === "in_progress" &&
+        !current.checkoutRunId &&
+        current.executionRunId &&
+        current.executionRunId !== checkoutRunId
+      ) {
+        const adopted = await adoptStaleExecutionRun({
+          issueId: id,
+          actorAgentId: agentId,
+          actorRunId: checkoutRunId,
+          expectedExecutionRunId: current.executionRunId,
+        });
+        if (adopted) {
+          const row = await db.select().from(issues).where(eq(issues.id, id)).then((rows) => rows[0]!);
+          const [enriched] = await withIssueLabels(db, [row]);
+          return enriched;
+        }
+      }
+
       if (
         checkoutRunId &&
         current.assigneeAgentId === agentId &&
@@ -1411,6 +1478,7 @@ export function issueService(db: Db) {
           status: issues.status,
           assigneeAgentId: issues.assigneeAgentId,
           checkoutRunId: issues.checkoutRunId,
+          executionRunId: issues.executionRunId,
         })
         .from(issues)
         .where(eq(issues.id, id))
@@ -1448,11 +1516,36 @@ export function issueService(db: Db) {
         }
       }
 
+      // checkoutRunId is null but executionRunId holds a stale run from the same agent
+      if (
+        actorRunId &&
+        current.status === "in_progress" &&
+        current.assigneeAgentId === actorAgentId &&
+        !current.checkoutRunId &&
+        current.executionRunId &&
+        current.executionRunId !== actorRunId
+      ) {
+        const adopted = await adoptStaleExecutionRun({
+          issueId: id,
+          actorAgentId,
+          actorRunId,
+          expectedExecutionRunId: current.executionRunId,
+        });
+
+        if (adopted) {
+          return {
+            ...adopted,
+            adoptedFromRunId: current.executionRunId,
+          };
+        }
+      }
+
       throw conflict("Issue run ownership conflict", {
         issueId: current.id,
         status: current.status,
         assigneeAgentId: current.assigneeAgentId,
         checkoutRunId: current.checkoutRunId,
+        executionRunId: current.executionRunId,
         actorAgentId,
         actorRunId,
       });
