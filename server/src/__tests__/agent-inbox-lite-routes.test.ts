@@ -296,4 +296,40 @@ describe("GET /api/agents/:id/inbox-lite", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
+
+  it("rejects cross-company agent with 403", async () => {
+    const otherCompanyId = "44444444-4444-4444-8444-444444444444";
+    const crossCompanyAgentId = "55555555-5555-4555-8555-555555555555";
+
+    mockAgentService.getById.mockImplementation(async (id: string) => {
+      if (id === agentId) return baseAgent;
+      if (id === crossCompanyAgentId)
+        return { ...baseAgent, id: crossCompanyAgentId, companyId: otherCompanyId };
+      return null;
+    });
+
+    const app = createApp({
+      type: "agent",
+      agentId: crossCompanyAgentId,
+      companyId: otherCompanyId,
+      runId: "run-cross",
+      source: "agent_key",
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
+
+    expect(res.status).toBe(403);
+    expect(mockIssueService.list).not.toHaveBeenCalled();
+  });
+
+  it("rejects unauthenticated caller with 401", async () => {
+    const app = createApp({
+      type: "none",
+    });
+
+    const res = await request(app).get(`/api/agents/${agentId}/inbox-lite`);
+
+    expect(res.status).toBe(401);
+    expect(mockIssueService.list).not.toHaveBeenCalled();
+  });
 });
