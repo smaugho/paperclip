@@ -42,6 +42,7 @@ const ACTION_VERBS: Record<string, string> = {
   "company.updated": "updated company",
   "company.archived": "archived",
   "company.budget_updated": "updated budget for",
+  "backup.failed": "database backup failed",
 };
 
 function humanizeValue(value: unknown): string {

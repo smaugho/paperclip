@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { dashboardApi } from "../api/dashboard";
+import { healthApi } from "../api/health";
 import { activityApi } from "../api/activity";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
@@ -19,7 +20,7 @@ import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
-import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
+import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle, HardDrive, CheckCircle2, AlertTriangle } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -78,6 +79,12 @@ export function Dashboard() {
     queryKey: queryKeys.heartbeats(selectedCompanyId!),
     queryFn: () => heartbeatsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
+  });
+
+  const { data: health } = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+    refetchInterval: 60_000,
   });
 
   const recentIssues = issues ? getRecentIssues(issues) : [];
@@ -207,6 +214,36 @@ export function Dashboard() {
       )}
 
       <ActiveAgentsPanel companyId={selectedCompanyId!} />
+
+      {health?.backup && health.backup.lastStatus === "failure" && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-[linear-gradient(180deg,rgba(255,80,80,0.12),rgba(255,255,255,0.02))] px-4 py-3">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
+            <div>
+              <p className="text-sm font-medium text-red-50">
+                Database backup failing
+              </p>
+              <p className="text-xs text-red-100/70">
+                {health.backup.consecutiveFailures} consecutive failure{health.backup.consecutiveFailures === 1 ? "" : "s"}
+                {health.backup.lastTimestamp && ` · Last attempt ${timeAgo(health.backup.lastTimestamp)}`}
+              </p>
+            </div>
+          </div>
+          <Link to="/activity" className="text-sm underline underline-offset-2 text-red-100 shrink-0">
+            View activity
+          </Link>
+        </div>
+      )}
+
+      {health?.backup && health.backup.lastStatus === "success" && (
+        <div className="flex items-center gap-2.5 rounded-xl border border-border px-4 py-3">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+          <p className="text-sm text-muted-foreground">
+            Backups healthy
+            {health.backup.lastTimestamp && <span> · Last backup {timeAgo(health.backup.lastTimestamp)}</span>}
+          </p>
+        </div>
+      )}
 
       {data && (
         <>

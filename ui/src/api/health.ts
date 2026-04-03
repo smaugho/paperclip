@@ -12,6 +12,12 @@ export type DevServerHealthStatus = {
   lastRestartAt: string | null;
 };
 
+export type BackupHealthStatus = {
+  lastStatus: "success" | "failure" | null;
+  lastTimestamp: string | null;
+  consecutiveFailures: number;
+};
+
 export type HealthStatus = {
   status: "ok";
   version?: string;
@@ -24,6 +30,7 @@ export type HealthStatus = {
     companyDeletionEnabled?: boolean;
   };
   devServer?: DevServerHealthStatus;
+  backup?: BackupHealthStatus;
 };
 
 export const healthApi = {
