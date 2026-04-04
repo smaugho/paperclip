@@ -108,7 +108,7 @@ export const paperclipConfigSchema = z
     database: databaseConfigSchema,
     logging: loggingConfigSchema,
     server: serverConfigSchema,
-    telemetry: telemetryConfigSchema,
+    telemetry: telemetryConfigSchema.optional(),
     auth: authConfigSchema.default({
       baseUrlMode: "auto",
       disableSignUp: false,

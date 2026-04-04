@@ -45,9 +45,6 @@ function writeBaseConfig(configPath: string) {
       baseUrlMode: "auto",
       disableSignUp: false,
     },
-    telemetry: {
-      enabled: true,
-    },
     storage: {
       provider: "local_disk",
       localDisk: { baseDir: "/tmp/paperclip-storage" },
