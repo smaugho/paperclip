@@ -629,6 +629,19 @@ export async function startServer(): Promise<StartedServer> {
         .catch((err) => {
           logger.error({ err }, "periodic agent error-state auto-recovery failed");
         });
+
+      // Wake idle agents that have actionable tasks (todo/in_progress) so they
+      // don't sit idle until the next timer interval (which can be 20-30 min).
+      void heartbeat
+        .wakeIdleAgentsWithPendingWork(new Date())
+        .then((result) => {
+          if (result.enqueued > 0) {
+            logger.info({ ...result }, "idle-agent wake check enqueued runs");
+          }
+        })
+        .catch((err) => {
+          logger.error({ err }, "idle-agent wake check failed");
+        });
     }, config.heartbeatSchedulerIntervalMs);
   }
   

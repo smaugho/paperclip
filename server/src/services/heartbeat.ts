@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import type { BillingType, ExecutionWorkspace, ExecutionWorkspaceConfig } from "@paperclipai/shared";
 import {
@@ -4232,6 +4232,78 @@ export function heartbeatService(db: Db) {
           contextSnapshot: {
             source: "scheduler",
             reason: "interval_elapsed",
+            now: now.toISOString(),
+          },
+        });
+        if (run) enqueued += 1;
+        else skipped += 1;
+      }
+
+      return { checked, enqueued, skipped };
+    },
+
+    /**
+     * Detect idle agents that have actionable tasks (todo / in_progress) assigned
+     * and wake them immediately rather than waiting for the next timer interval.
+     *
+     * A cooldown prevents wake-spam: agents whose last heartbeat completed fewer
+     * than `cooldownSec` seconds ago are skipped.
+     */
+    wakeIdleAgentsWithPendingWork: async (
+      now = new Date(),
+      { cooldownSec = 60 }: { cooldownSec?: number } = {},
+    ) => {
+      // 1. Find agents that are idle and have heartbeats enabled with on-demand wakes allowed.
+      const idleAgents = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.status, "idle"));
+
+      let checked = 0;
+      let enqueued = 0;
+      let skipped = 0;
+
+      for (const agent of idleAgents) {
+        const policy = parseHeartbeatPolicy(agent);
+        if (!policy.enabled || !policy.wakeOnDemand) continue;
+
+        checked += 1;
+
+        // 2. Cooldown: skip if last heartbeat was too recent.
+        const lastHb = new Date(agent.lastHeartbeatAt ?? agent.createdAt).getTime();
+        if (now.getTime() - lastHb < cooldownSec * 1000) {
+          skipped += 1;
+          continue;
+        }
+
+        // 3. Check whether this agent has at least one actionable issue.
+        const [pendingIssue] = await db
+          .select({ id: issues.id })
+          .from(issues)
+          .where(
+            and(
+              eq(issues.assigneeAgentId, agent.id),
+              inArray(issues.status, ["todo", "in_progress"]),
+              isNull(issues.hiddenAt),
+            ),
+          )
+          .limit(1);
+
+        if (!pendingIssue) {
+          skipped += 1;
+          continue;
+        }
+
+        // 4. Wake the agent.
+        const run = await enqueueWakeup(agent.id, {
+          source: "automation",
+          triggerDetail: "system",
+          reason: "idle_pending_work",
+          requestedByActorType: "system",
+          requestedByActorId: "heartbeat_scheduler",
+          contextSnapshot: {
+            source: "scheduler",
+            reason: "idle_pending_work",
             now: now.toISOString(),
           },
         });
