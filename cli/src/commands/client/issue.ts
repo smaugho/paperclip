@@ -16,6 +16,7 @@ import {
   printOutput,
   resolveCommandContext,
   resolveTextOption,
+  unescapeText,
   type BaseClientOptions,
 } from "./common.js";
 import {
@@ -175,9 +176,9 @@ export function registerIssueCommands(program: Command): void {
       .action(async (opts: IssueCreateOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });
-          const description = resolveTextOption(opts.description, opts.descriptionFile, "--description", "--description-file");
+          const description = unescapeText(resolveTextOption(opts.description, opts.descriptionFile, "--description", "--description-file"));
           const payload = createIssueSchema.parse({
-            title: opts.title,
+            title: unescapeText(opts.title),
             description,
             status: opts.status,
             priority: opts.priority,
@@ -220,10 +221,10 @@ export function registerIssueCommands(program: Command): void {
       .action(async (issueId: string, opts: IssueUpdateOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const description = resolveTextOption(opts.description, opts.descriptionFile, "--description", "--description-file");
-          const comment = resolveTextOption(opts.comment, opts.commentFile, "--comment", "--comment-file");
+          const description = unescapeText(resolveTextOption(opts.description, opts.descriptionFile, "--description", "--description-file"));
+          const comment = unescapeText(resolveTextOption(opts.comment, opts.commentFile, "--comment", "--comment-file"));
           const payload = updateIssueSchema.parse({
-            title: opts.title,
+            title: unescapeText(opts.title),
             description,
             status: opts.status,
             priority: opts.priority,
@@ -256,7 +257,7 @@ export function registerIssueCommands(program: Command): void {
       .action(async (issueId: string, opts: IssueCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const body = resolveTextOption(opts.body, opts.bodyFile, "--body", "--body-file");
+          const body = unescapeText(resolveTextOption(opts.body, opts.bodyFile, "--body", "--body-file"));
           if (!body) {
             throw new Error("Either --body or --body-file is required");
           }

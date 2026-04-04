@@ -14,6 +14,7 @@ import {
   printOutput,
   resolveCommandContext,
   resolveTextOption,
+  unescapeText,
   type BaseClientOptions,
 } from "./common.js";
 
@@ -148,7 +149,7 @@ export function registerApprovalCommands(program: Command): void {
       .action(async (approvalId: string, opts: ApprovalDecisionOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const decisionNote = resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file");
+          const decisionNote = unescapeText(resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file"));
           const payload = resolveApprovalSchema.parse({
             decisionNote,
             decidedByUserId: opts.decidedByUserId,
@@ -172,7 +173,7 @@ export function registerApprovalCommands(program: Command): void {
       .action(async (approvalId: string, opts: ApprovalDecisionOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const decisionNote = resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file");
+          const decisionNote = unescapeText(resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file"));
           const payload = resolveApprovalSchema.parse({
             decisionNote,
             decidedByUserId: opts.decidedByUserId,
@@ -196,7 +197,7 @@ export function registerApprovalCommands(program: Command): void {
       .action(async (approvalId: string, opts: ApprovalDecisionOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const decisionNote = resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file");
+          const decisionNote = unescapeText(resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file"));
           const payload = requestApprovalRevisionSchema.parse({
             decisionNote,
             decidedByUserId: opts.decidedByUserId,
@@ -239,7 +240,7 @@ export function registerApprovalCommands(program: Command): void {
       .action(async (approvalId: string, opts: ApprovalCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const body = resolveTextOption(opts.body, opts.bodyFile, "--body", "--body-file");
+          const body = unescapeText(resolveTextOption(opts.body, opts.bodyFile, "--body", "--body-file"));
           if (!body) {
             throw new Error("Either --body or --body-file is required");
           }

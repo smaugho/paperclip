@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeContext } from "../client/context.js";
-import { readBodyFromFile, resolveCommandContext, resolveTextOption } from "../commands/client/common.js";
+import { readBodyFromFile, resolveCommandContext, resolveTextOption, unescapeText } from "../commands/client/common.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -11,6 +11,32 @@ function createTempPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-cli-common-"));
   return path.join(dir, name);
 }
+
+describe("unescapeText", () => {
+  it("converts \\n to newline", () => {
+    expect(unescapeText("line1\\nline2")).toBe("line1\nline2");
+  });
+
+  it("converts \\t to tab", () => {
+    expect(unescapeText("col1\\tcol2")).toBe("col1\tcol2");
+  });
+
+  it("converts \\\\ to single backslash", () => {
+    expect(unescapeText("path\\\\file")).toBe("path\\file");
+  });
+
+  it("handles \\\\n as literal backslash + n", () => {
+    expect(unescapeText("literal\\\\n")).toBe("literal\\n");
+  });
+
+  it("returns undefined for undefined input", () => {
+    expect(unescapeText(undefined)).toBeUndefined();
+  });
+
+  it("passes through strings without escape sequences", () => {
+    expect(unescapeText("no escapes here")).toBe("no escapes here");
+  });
+});
 
 describe("resolveCommandContext", () => {
   beforeEach(() => {
