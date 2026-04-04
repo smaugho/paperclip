@@ -50,4 +50,46 @@ describe("errorHandler", () => {
     expect(res.err).toBe(err);
     expect(res.__errorContext?.error?.message).toBe("db exploded");
   });
+
+  it("handles http-errors style errors with .status and .expose (4xx)", () => {
+    const req = makeReq();
+    const res = makeRes() as any;
+    const next = vi.fn() as unknown as NextFunction;
+    const err = Object.assign(new Error("Request body must be valid UTF-8"), {
+      status: 400,
+      statusCode: 400,
+      expose: true,
+      type: "entity.verify.failed",
+    });
+
+    errorHandler(err, req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Request body must be valid UTF-8",
+    });
+    // 4xx errors should NOT attach error context
+    expect(res.__errorContext).toBeUndefined();
+    expect(res.err).toBeUndefined();
+  });
+
+  it("hides message for http-errors style 5xx when expose is false", () => {
+    const req = makeReq();
+    const res = makeRes() as any;
+    const next = vi.fn() as unknown as NextFunction;
+    const err = Object.assign(new Error("secret internal details"), {
+      status: 503,
+      statusCode: 503,
+      expose: false,
+    });
+
+    errorHandler(err, req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Internal server error",
+    });
+    expect(res.err).toBe(err);
+    expect(res.__errorContext?.error?.message).toBe("secret internal details");
+  });
 });

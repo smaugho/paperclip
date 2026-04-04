@@ -588,6 +588,128 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   });
 });
 
+describeEmbeddedPostgres("issueService.list identifier filter", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-identifier-filter-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(activityLog);
+    await db.delete(issues);
+    await db.delete(agents);
+    await db.delete(instanceSettings);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  it("returns only the issue matching the given identifier", async () => {
+    const companyId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(instanceSettings).values({ id: "singleton", localTrustedMode: true, settings: {} });
+
+    const targetId = randomUUID();
+    const otherId = randomUUID();
+    const targetIdentifier = `${issuePrefix}-1`;
+    const otherIdentifier = `${issuePrefix}-2`;
+
+    await db.insert(issues).values([
+      {
+        id: targetId,
+        companyId,
+        identifier: targetIdentifier,
+        title: "Target issue",
+        status: "todo",
+        priority: "medium",
+      },
+      {
+        id: otherId,
+        companyId,
+        identifier: otherIdentifier,
+        title: "Other issue",
+        status: "todo",
+        priority: "medium",
+      },
+    ]);
+
+    const result = await svc.list(companyId, { identifier: targetIdentifier });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(targetId);
+    expect(result[0].identifier).toBe(targetIdentifier);
+  });
+
+  it("normalises identifier to uppercase for case-insensitive match", async () => {
+    const companyId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(instanceSettings).values({ id: "singleton", localTrustedMode: true, settings: {} });
+
+    const targetId = randomUUID();
+    const targetIdentifier = `${issuePrefix}-1`;
+
+    await db.insert(issues).values({
+      id: targetId,
+      companyId,
+      identifier: targetIdentifier,
+      title: "Target issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    const result = await svc.list(companyId, { identifier: targetIdentifier.toLowerCase() });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(targetId);
+  });
+
+  it("returns empty array when identifier does not match any issue", async () => {
+    const companyId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(instanceSettings).values({ id: "singleton", localTrustedMode: true, settings: {} });
+
+    await db.insert(issues).values({
+      id: randomUUID(),
+      companyId,
+      identifier: "TNONE-1",
+      title: "Some issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    const result = await svc.list(companyId, { identifier: "TNONE-999" });
+    expect(result).toHaveLength(0);
+  });
+});
+
 describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
   let db!: ReturnType<typeof createDb>;
   let svc!: ReturnType<typeof issueService>;
