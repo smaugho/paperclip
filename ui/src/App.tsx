@@ -17,6 +17,8 @@ import { IssueDetail } from "./pages/IssueDetail";
 import { IssueSettings } from "./pages/IssueSettings";
 import { Routines } from "./pages/Routines";
 import { RoutineDetail } from "./pages/RoutineDetail";
+import { Workflows } from "./pages/Workflows";
+import { WorkflowDetail } from "./pages/WorkflowDetail";
 import { ExecutionWorkspaceDetail } from "./pages/ExecutionWorkspaceDetail";
 import { Goals } from "./pages/Goals";
 import { GoalDetail } from "./pages/GoalDetail";
@@ -160,6 +162,8 @@ function boardRoutes() {
       <Route path="issues/:issueId" element={<IssueDetail />} />
       <Route path="routines" element={<Routines />} />
       <Route path="routines/:routineId" element={<RoutineDetail />} />
+      <Route path="workflows" element={<Workflows />} />
+      <Route path="workflows/:workflowId" element={<WorkflowDetail />} />
       <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
       <Route path="goals" element={<Goals />} />
       <Route path="goals/:goalId" element={<GoalDetail />} />
@@ -330,6 +334,8 @@ export function App() {
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
           <Route path="routines" element={<UnprefixedBoardRedirect />} />
           <Route path="routines/:routineId" element={<UnprefixedBoardRedirect />} />
+          <Route path="workflows" element={<UnprefixedBoardRedirect />} />
+          <Route path="workflows/:workflowId" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/*" element={<UnprefixedBoardRedirect />} />
           <Route path="settings" element={<LegacySettingsRedirect />} />
           <Route path="settings/*" element={<LegacySettingsRedirect />} />
