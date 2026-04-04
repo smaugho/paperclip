@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   getBackupStatus,
+  markFailureIssueCreated,
   recordBackupFailure,
   recordBackupSuccess,
   resetBackupStatus,
+  shouldCreateFailureIssue,
 } from "../services/backup-status.js";
 
 describe("backup-status tracker", () => {
@@ -69,5 +71,41 @@ describe("backup-status tracker", () => {
     expect(s1).toEqual(s2);
     s1.consecutiveFailures = 999;
     expect(getBackupStatus().consecutiveFailures).toBe(1);
+  });
+
+  describe("failure issue dedup", () => {
+    it("shouldCreateFailureIssue returns false below threshold", () => {
+      recordBackupFailure(new Error("fail 1"));
+      recordBackupFailure(new Error("fail 2"));
+      expect(shouldCreateFailureIssue(3)).toBe(false);
+    });
+
+    it("shouldCreateFailureIssue returns true at threshold", () => {
+      recordBackupFailure(new Error("fail 1"));
+      recordBackupFailure(new Error("fail 2"));
+      recordBackupFailure(new Error("fail 3"));
+      expect(shouldCreateFailureIssue(3)).toBe(true);
+    });
+
+    it("markFailureIssueCreated prevents duplicate issues", () => {
+      recordBackupFailure(new Error("fail 1"));
+      recordBackupFailure(new Error("fail 2"));
+      recordBackupFailure(new Error("fail 3"));
+      expect(shouldCreateFailureIssue(3)).toBe(true);
+      markFailureIssueCreated();
+      expect(shouldCreateFailureIssue(3)).toBe(false);
+    });
+
+    it("dedup flag resets on success", () => {
+      recordBackupFailure(new Error("fail 1"));
+      recordBackupFailure(new Error("fail 2"));
+      recordBackupFailure(new Error("fail 3"));
+      markFailureIssueCreated();
+      recordBackupSuccess();
+      recordBackupFailure(new Error("new fail 1"));
+      recordBackupFailure(new Error("new fail 2"));
+      recordBackupFailure(new Error("new fail 3"));
+      expect(shouldCreateFailureIssue(3)).toBe(true);
+    });
   });
 });

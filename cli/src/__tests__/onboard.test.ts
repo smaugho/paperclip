@@ -25,6 +25,7 @@ function createExistingConfigFixture() {
         enabled: true,
         intervalMinutes: 60,
         retentionDays: 30,
+        failureIssueThreshold: 3,
         dir: path.join(runtimeRoot, "backups"),
       },
     },

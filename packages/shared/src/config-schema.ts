@@ -23,6 +23,7 @@ export const databaseBackupConfigSchema = z.object({
   intervalMinutes: z.number().int().min(1).max(7 * 24 * 60).default(60),
   retentionDays: z.number().int().min(1).max(3650).default(30),
   dir: z.string().default("~/.paperclip/instances/default/data/backups"),
+  failureIssueThreshold: z.number().int().min(1).default(3),
 });
 
 export const databaseConfigSchema = z.object({
@@ -35,6 +36,7 @@ export const databaseConfigSchema = z.object({
     intervalMinutes: 60,
     retentionDays: 30,
     dir: "~/.paperclip/instances/default/data/backups",
+    failureIssueThreshold: 3,
   }),
 });
 

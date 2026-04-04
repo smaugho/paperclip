@@ -86,15 +86,6 @@ export function issueRoutes(db: Db, storage: StorageService) {
     return true;
   }
 
-  async function assertDependenciesEnabled(res: Response): Promise<boolean> {
-    const { enableDependencies } = await instanceSettings.getExperimental();
-    if (!enableDependencies) {
-      res.status(403).json({ error: "Dependencies feature is not enabled. Enable the 'enableDependencies' experimental flag in instance settings." });
-      return false;
-    }
-    return true;
-  }
-
   function withContentPath<T extends { id: string }>(attachment: T) {
     return {
       ...attachment,
