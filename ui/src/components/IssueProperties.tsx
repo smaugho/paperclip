@@ -14,6 +14,7 @@ import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
+import { BlockedOnBadge } from "./BlockedOnBadge";
 import { Identity } from "./Identity";
 import { formatDate, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
@@ -498,6 +499,16 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
             showLabel
           />
         </PropertyRow>
+
+        {issue.status === "blocked" && (
+          <PropertyRow label="Blocked on">
+            <BlockedOnBadge
+              blockedOn={issue.blockedOn}
+              onChange={(blockedOn) => onUpdate({ blockedOn })}
+              showLabel
+            />
+          </PropertyRow>
+        )}
 
         <PropertyRow label="Priority">
           <PriorityIcon
