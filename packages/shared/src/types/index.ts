@@ -119,6 +119,21 @@ export type {
   SecretProviderDescriptor,
 } from "./secrets.js";
 export type {
+  Workflow,
+  WorkflowRevision,
+  WorkflowAgentAssignment,
+  WorkflowRun,
+  WorkflowRunStep,
+  WorkflowStepDef,
+  WorkflowEdge,
+  WorkflowGraph,
+  WorkflowAgentSummary,
+  WorkflowRunSummary,
+  WorkflowDetail,
+  WorkflowListItem,
+  WorkflowMermaidOutput,
+} from "./workflow.js";
+export type {
   Routine,
   RoutineTrigger,
   RoutineRun,
