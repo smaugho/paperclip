@@ -12,11 +12,22 @@ export const instanceGeneralSettingsSchema = z.object({
 
 export const patchInstanceGeneralSettingsSchema = instanceGeneralSettingsSchema.partial();
 
+export const crashMonitoringSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  monitoringAgentId: z.string().uuid().nullable().default(null),
+  failureThreshold: z.number().int().min(1).max(100).default(3),
+  timeWindowMs: z.number().int().min(60_000).max(86_400_000).default(3_600_000),
+  cooldownMs: z.number().int().min(60_000).max(86_400_000).default(300_000),
+}).strict();
+
+export type CrashMonitoringSettings = z.infer<typeof crashMonitoringSettingsSchema>;
+
 export const instanceExperimentalSettingsSchema = z.object({
   enableIsolatedWorkspaces: z.boolean().default(false),
   autoRestartDevServerWhenIdle: z.boolean().default(false),
   enableWorkProducts: z.boolean().default(false),
   enableDependencies: z.boolean().default(false),
+  crashMonitoring: crashMonitoringSettingsSchema.default({}),
 }).strict();
 
 export const patchInstanceExperimentalSettingsSchema = instanceExperimentalSettingsSchema.partial();

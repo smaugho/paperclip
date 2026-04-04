@@ -7,6 +7,8 @@ export {
   patchInstanceExperimentalSettingsSchema,
   type InstanceExperimentalSettings,
   type PatchInstanceExperimentalSettings,
+  crashMonitoringSettingsSchema,
+  type CrashMonitoringSettings,
 } from "./instance.js";
 
 export {

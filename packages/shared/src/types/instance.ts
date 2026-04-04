@@ -6,11 +6,20 @@ export interface InstanceGeneralSettings {
   feedbackDataSharingPreference: FeedbackDataSharingPreference;
 }
 
+export interface CrashMonitoringSettings {
+  enabled: boolean;
+  monitoringAgentId: string | null;
+  failureThreshold: number;
+  timeWindowMs: number;
+  cooldownMs: number;
+}
+
 export interface InstanceExperimentalSettings {
   enableIsolatedWorkspaces: boolean;
   autoRestartDevServerWhenIdle: boolean;
   enableWorkProducts: boolean;
   enableDependencies: boolean;
+  crashMonitoring: CrashMonitoringSettings;
 }
 
 export interface InstanceSettings {

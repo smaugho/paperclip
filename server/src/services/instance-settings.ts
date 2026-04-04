@@ -31,6 +31,14 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
   };
 }
 
+const DEFAULT_CRASH_MONITORING = {
+  enabled: false,
+  monitoringAgentId: null,
+  failureThreshold: 3,
+  timeWindowMs: 3_600_000,
+  cooldownMs: 300_000,
+} as const;
+
 function normalizeExperimentalSettings(raw: unknown): InstanceExperimentalSettings {
   const parsed = instanceExperimentalSettingsSchema.safeParse(raw ?? {});
   if (parsed.success) {
@@ -39,6 +47,7 @@ function normalizeExperimentalSettings(raw: unknown): InstanceExperimentalSettin
       autoRestartDevServerWhenIdle: parsed.data.autoRestartDevServerWhenIdle ?? false,
       enableWorkProducts: parsed.data.enableWorkProducts ?? false,
       enableDependencies: parsed.data.enableDependencies ?? false,
+      crashMonitoring: parsed.data.crashMonitoring ?? DEFAULT_CRASH_MONITORING,
     };
   }
   return {
@@ -46,6 +55,7 @@ function normalizeExperimentalSettings(raw: unknown): InstanceExperimentalSettin
     autoRestartDevServerWhenIdle: false,
     enableWorkProducts: false,
     enableDependencies: false,
+    crashMonitoring: DEFAULT_CRASH_MONITORING,
   };
 }
 

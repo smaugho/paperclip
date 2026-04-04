@@ -55,6 +55,12 @@ import {
   resolveExecutionWorkspaceMode,
 } from "./execution-workspace-policy.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import {
+  recordRunSuccess,
+  recordRunFailure,
+  shouldWakeMonitor,
+  markMonitorWoken,
+} from "./crash-monitor.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
 import {
   hasSessionCompactionThresholds,
@@ -1855,6 +1861,71 @@ export function heartbeatService(db: Db) {
     }
   }
 
+  /**
+   * After a run completes, check crash-monitoring conditions and wake the
+   * designated monitoring agent if the failure threshold is reached.
+   */
+  async function checkCrashMonitoring(
+    agentId: string,
+    companyId: string,
+    outcome: "succeeded" | "failed" | "cancelled" | "timed_out",
+    error: string | null,
+    errorCode: string | null,
+  ) {
+    if (outcome === "succeeded" || outcome === "cancelled") {
+      recordRunSuccess(agentId);
+      return;
+    }
+
+    // Record failure and check if we need to wake the monitoring agent
+    recordRunFailure(agentId, error, errorCode);
+
+    try {
+      const config = (await instanceSettings.getExperimental()).crashMonitoring;
+      const decision = shouldWakeMonitor(agentId, config);
+
+      if (!decision.shouldWake || !config.monitoringAgentId) return;
+
+      logger.info(
+        { agentId, monitoringAgentId: config.monitoringAgentId, record: decision.record },
+        "crash monitoring: waking monitoring agent",
+      );
+
+      markMonitorWoken(agentId);
+
+      await enqueueWakeup(config.monitoringAgentId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "crash_monitoring",
+        payload: {
+          failedAgentId: agentId,
+          companyId,
+          consecutiveFailures: decision.record.consecutiveFailures,
+          firstFailureAt: decision.record.firstFailureAt,
+          lastFailureAt: decision.record.lastFailureAt,
+          lastError: decision.record.lastError,
+          lastErrorCode: decision.record.lastErrorCode,
+        },
+        requestedByActorType: "system",
+        requestedByActorId: "crash_monitor",
+        contextSnapshot: {
+          wakeSource: "crash_monitoring",
+          wakeReason: "crash_monitoring",
+          failedAgentId: agentId,
+        },
+      }).catch((wakeErr) => {
+        // Don't let monitoring failures break the main heartbeat flow
+        logger.warn(
+          { err: wakeErr, agentId, monitoringAgentId: config.monitoringAgentId },
+          "crash monitoring: failed to wake monitoring agent",
+        );
+      });
+    } catch (err) {
+      // Settings fetch or decision failed — log and continue
+      logger.warn({ err, agentId }, "crash monitoring: check failed");
+    }
+  }
+
   async function reapOrphanedRuns(opts?: { staleThresholdMs?: number }) {
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
     const now = new Date();
@@ -1944,6 +2015,7 @@ export function heartbeatService(db: Db) {
       });
 
       await finalizeAgentStatus(run.agentId, "failed");
+      await checkCrashMonitoring(run.agentId, run.companyId, "failed", "process_lost", "process_lost").catch(() => undefined);
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
       reaped.push(run.id);
@@ -2881,6 +2953,13 @@ export function heartbeatService(db: Db) {
       await finalizeAgentStatus(agent.id, outcome, {
         errorCode: adapterResult.errorCode ?? null,
       });
+      await checkCrashMonitoring(
+        agent.id,
+        agent.companyId,
+        outcome,
+        adapterResult.errorMessage ?? null,
+        adapterResult.errorCode ?? null,
+      );
     } catch (err) {
       const message = redactCurrentUserText(
         err instanceof Error ? err.message : "Unknown adapter failure",
@@ -2945,6 +3024,7 @@ export function heartbeatService(db: Db) {
       }
 
       await finalizeAgentStatus(agent.id, "failed");
+      await checkCrashMonitoring(agent.id, agent.companyId, "failed", message, "adapter_failed");
     }
     } catch (outerErr) {
           // Setup code before adapter.execute threw (e.g. ensureRuntimeState, resolveWorkspaceForRun).
@@ -2975,6 +3055,7 @@ export function heartbeatService(db: Db) {
           // Ensure the agent is not left stuck in "running" if the inner catch handler's
           // DB calls threw (e.g. a transient DB error in finalizeAgentStatus).
           await finalizeAgentStatus(run.agentId, "failed").catch(() => undefined);
+          await checkCrashMonitoring(run.agentId, run.companyId, "failed", message, "adapter_failed").catch(() => undefined);
         } finally {
           await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
           activeRunExecutions.delete(run.id);
@@ -3770,6 +3851,7 @@ export function heartbeatService(db: Db) {
 
     runningProcesses.delete(run.id);
     await finalizeAgentStatus(run.agentId, "cancelled");
+    recordRunSuccess(run.agentId); // Cancellation resets failure streak
     await startNextQueuedRunForAgent(run.agentId);
     return cancelled;
   }

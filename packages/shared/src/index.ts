@@ -187,6 +187,7 @@ export type {
   AgentSkillEntry,
   AgentSkillSnapshot,
   AgentSkillSyncRequest,
+  CrashMonitoringSettings,
   InstanceExperimentalSettings,
   InstanceGeneralSettings,
   InstanceSettings,
@@ -385,6 +386,7 @@ export {
   instanceExperimentalSettingsSchema,
   patchInstanceExperimentalSettingsSchema,
   type PatchInstanceExperimentalSettings,
+  crashMonitoringSettingsSchema,
 } from "./validators/index.js";
 
 export {
