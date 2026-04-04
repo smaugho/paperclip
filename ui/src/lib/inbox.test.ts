@@ -167,6 +167,7 @@ function makeIssue(id: string, isUnreadForMe: boolean): Issue {
     executionWorkspaceId: null,
     executionWorkspacePreference: null,
     executionWorkspaceSettings: null,
+    closeoutPolicy: null,
     checkoutRunId: null,
     executionRunId: null,
     executionAgentNameKey: null,

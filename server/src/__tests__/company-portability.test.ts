@@ -713,6 +713,7 @@ describe("company portability", () => {
         labelIds: [],
         billingCode: null,
         executionWorkspaceSettings: null,
+        closeoutPolicy: null,
         assigneeAdapterOverrides: null,
       },
     ]);
@@ -988,6 +989,7 @@ describe("company portability", () => {
         labelIds: [],
         billingCode: null,
         executionWorkspaceSettings: null,
+        closeoutPolicy: null,
         assigneeAdapterOverrides: null,
       },
     ]);
@@ -1062,6 +1064,7 @@ describe("company portability", () => {
         labelIds: [],
         billingCode: null,
         executionWorkspaceSettings: null,
+        closeoutPolicy: null,
         assigneeAdapterOverrides: null,
       },
       {
@@ -1077,6 +1080,7 @@ describe("company portability", () => {
         labelIds: [],
         billingCode: null,
         executionWorkspaceSettings: null,
+        closeoutPolicy: null,
         assigneeAdapterOverrides: null,
       },
       {
@@ -1092,6 +1096,7 @@ describe("company portability", () => {
         labelIds: [],
         billingCode: null,
         executionWorkspaceSettings: null,
+        closeoutPolicy: null,
         assigneeAdapterOverrides: null,
       },
     ]);
