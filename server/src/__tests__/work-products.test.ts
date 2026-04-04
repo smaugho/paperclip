@@ -15,8 +15,8 @@ function createWorkProductRow(overrides: Partial<Record<string, unknown>> = {}) 
     externalId: null,
     title: "PR 1",
     url: "https://example.com/pr/1",
-    status: "open",
-    reviewState: "draft",
+    status: "active",
+    reviewState: "none",
     isPrimary: true,
     healthStatus: "unknown",
     summary: null,
@@ -50,8 +50,8 @@ describe("workProductService", () => {
       type: "pull_request",
       provider: "github",
       title: "PR 1",
-      status: "open",
-      reviewState: "draft",
+      status: "active",
+      reviewState: "none",
       isPrimary: true,
     });
 
