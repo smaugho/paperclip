@@ -80,6 +80,13 @@ const SESSIONED_LOCAL_ADAPTERS = new Set([
   "pi_local",
 ]);
 
+/** How long an agent must be in `error` with no active runs before auto-recovery kicks in. */
+const ERROR_AUTO_RECOVERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+/** Max auto-recoveries within the rolling window before giving up. */
+const ERROR_AUTO_RECOVERY_MAX_COUNT = 3;
+/** Rolling window for counting consecutive auto-recoveries. */
+const ERROR_AUTO_RECOVERY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
 export function applyPersistedExecutionWorkspaceConfig(input: {
   config: Record<string, unknown>;
   workspaceConfig: ExecutionWorkspaceConfig | null;
@@ -1953,6 +1960,152 @@ export function heartbeatService(db: Db) {
       logger.warn({ reapedCount: reaped.length, runIds: reaped }, "reaped orphaned heartbeat runs");
     }
     return { reaped: reaped.length, runIds: reaped };
+  }
+
+  /**
+   * Auto-recover agents stuck in `error` state.
+   *
+   * If an agent has been in `error` for longer than `timeoutMs` and has no
+   * active (running/queued) heartbeat runs, reset it to `idle` so the
+   * heartbeat scheduler can invoke it again.
+   *
+   * To prevent runaway recovery loops, the function tracks recovery
+   * timestamps in `agentRuntimeState.stateJson.autoRecoveryTimestamps`.
+   * If the agent has been auto-recovered `maxCount` times within
+   * `windowMs`, it is left in `error` and a warning is logged.
+   */
+  async function recoverErroredAgents(opts?: {
+    timeoutMs?: number;
+    maxCount?: number;
+    windowMs?: number;
+  }) {
+    const timeoutMs = opts?.timeoutMs ?? ERROR_AUTO_RECOVERY_TIMEOUT_MS;
+    const maxCount = opts?.maxCount ?? ERROR_AUTO_RECOVERY_MAX_COUNT;
+    const windowMs = opts?.windowMs ?? ERROR_AUTO_RECOVERY_WINDOW_MS;
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - timeoutMs);
+
+    // Find agents that are in error state and whose last heartbeat is older than the timeout.
+    const errorAgents = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.status, "error"));
+
+    let recovered = 0;
+    let skippedCap = 0;
+    let skippedActiveRuns = 0;
+
+    for (const agent of errorAgents) {
+      // Only recover if the agent has been in error long enough.
+      const lastActivity = agent.lastHeartbeatAt
+        ? new Date(agent.lastHeartbeatAt)
+        : (agent.updatedAt ? new Date(agent.updatedAt) : null);
+      if (!lastActivity || lastActivity > cutoff) continue;
+
+      // Ensure no running or queued runs exist for this agent.
+      const activeCount = await countRunningRunsForAgent(agent.id);
+      const [{ queuedCount }] = await db
+        .select({ queuedCount: sql<number>`count(*)` })
+        .from(heartbeatRuns)
+        .where(and(eq(heartbeatRuns.agentId, agent.id), eq(heartbeatRuns.status, "queued")));
+      if (activeCount > 0 || Number(queuedCount ?? 0) > 0) {
+        skippedActiveRuns += 1;
+        continue;
+      }
+
+      // Check the recovery cap via stateJson.
+      const runtimeState = await getRuntimeState(agent.id);
+      const stateJson: Record<string, unknown> = runtimeState?.stateJson ?? {};
+      const rawTimestamps = Array.isArray(stateJson.autoRecoveryTimestamps)
+        ? (stateJson.autoRecoveryTimestamps as string[])
+        : [];
+      const windowCutoff = now.getTime() - windowMs;
+      const recentTimestamps = rawTimestamps.filter(
+        (ts) => new Date(ts).getTime() > windowCutoff,
+      );
+
+      if (recentTimestamps.length >= maxCount) {
+        skippedCap += 1;
+        logger.warn(
+          {
+            agentId: agent.id,
+            agentName: agent.name,
+            recentRecoveries: recentTimestamps.length,
+            maxCount,
+            windowMs,
+          },
+          "agent exceeded auto-recovery cap; leaving in error state",
+        );
+        continue;
+      }
+
+      // Perform recovery: reset agent to idle.
+      const updatedTimestamps = [...recentTimestamps, now.toISOString()];
+      const updatedStateJson = { ...stateJson, autoRecoveryTimestamps: updatedTimestamps };
+
+      await db
+        .update(agents)
+        .set({
+          status: "idle",
+          lastHeartbeatAt: now,
+          updatedAt: now,
+        })
+        .where(eq(agents.id, agent.id));
+
+      // Persist recovery history in runtime state.
+      if (runtimeState) {
+        await db
+          .update(agentRuntimeState)
+          .set({ stateJson: updatedStateJson, updatedAt: now })
+          .where(eq(agentRuntimeState.agentId, agent.id));
+      } else {
+        await db
+          .insert(agentRuntimeState)
+          .values({
+            agentId: agent.id,
+            companyId: agent.companyId,
+            adapterType: agent.adapterType,
+            stateJson: updatedStateJson,
+          })
+          .onConflictDoUpdate({
+            target: agentRuntimeState.agentId,
+            set: { stateJson: updatedStateJson, updatedAt: now },
+          });
+      }
+
+      // Publish live event so the dashboard updates immediately.
+      publishLiveEvent({
+        companyId: agent.companyId,
+        type: "agent.status",
+        payload: {
+          agentId: agent.id,
+          status: "idle",
+          lastHeartbeatAt: now.toISOString(),
+          outcome: "auto_recovered",
+        },
+      });
+
+      logger.info(
+        {
+          agentId: agent.id,
+          agentName: agent.name,
+          previousError: runtimeState?.lastError ?? null,
+          recoveryCount: updatedTimestamps.length,
+        },
+        "auto-recovered agent from error state to idle",
+      );
+
+      recovered += 1;
+    }
+
+    if (recovered > 0 || skippedCap > 0) {
+      logger.info(
+        { recovered, skippedCap, skippedActiveRuns },
+        "agent error-state auto-recovery sweep complete",
+      );
+    }
+
+    return { recovered, skippedCap, skippedActiveRuns };
   }
 
   async function resumeQueuedRuns() {
@@ -3967,6 +4120,8 @@ export function heartbeatService(db: Db) {
     reportRunActivity: clearDetachedRunWarning,
 
     reapOrphanedRuns,
+
+    recoverErroredAgents,
 
     resumeQueuedRuns,
 

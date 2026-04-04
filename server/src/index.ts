@@ -583,8 +583,10 @@ export async function startServer(): Promise<StartedServer> {
   
     // Reap orphaned running runs at startup while in-memory execution state is empty,
     // then resume any persisted queued runs that were waiting on the previous process.
+    // Also auto-recover agents stuck in error state from the previous process.
     void heartbeat
       .reapOrphanedRuns()
+      .then(() => heartbeat.recoverErroredAgents())
       .then(() => heartbeat.resumeQueuedRuns())
       .catch((err) => {
         logger.error({ err }, "startup heartbeat recovery failed");
@@ -619,6 +621,13 @@ export async function startServer(): Promise<StartedServer> {
         .then(() => heartbeat.resumeQueuedRuns())
         .catch((err) => {
           logger.error({ err }, "periodic heartbeat recovery failed");
+        });
+
+      // Auto-recover agents stuck in error state (no active runs for >5 min).
+      void heartbeat
+        .recoverErroredAgents()
+        .catch((err) => {
+          logger.error({ err }, "periodic agent error-state auto-recovery failed");
         });
     }, config.heartbeatSchedulerIntervalMs);
   }
