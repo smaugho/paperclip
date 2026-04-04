@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@/lib/router";
 import { ChevronDown, ChevronRight, MoreHorizontal, Play, Plus, Repeat } from "lucide-react";
 import { routinesApi } from "../api/routines";
-import { instanceSettingsApi } from "../api/instanceSettings";
+
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
@@ -16,12 +16,6 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
-import {
-  RoutineRunVariablesDialog,
-  routineRunNeedsConfiguration,
-  type RoutineRunDialogSubmitData,
-} from "../components/RoutineRunVariablesDialog";
-import { RoutineVariablesEditor, RoutineVariablesHint } from "../components/RoutineVariablesEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -40,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { RoutineListItem, RoutineVariable } from "@paperclipai/shared";
+import type { RoutineListItem } from "@paperclipai/shared";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -82,7 +76,6 @@ export function Routines() {
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
   const [runningRoutineId, setRunningRoutineId] = useState<string | null>(null);
   const [statusMutationRoutineId, setStatusMutationRoutineId] = useState<string | null>(null);
-  const [runDialogRoutine, setRunDialogRoutine] = useState<RoutineListItem | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [draft, setDraft] = useState<{
@@ -93,7 +86,6 @@ export function Routines() {
     priority: string;
     concurrencyPolicy: string;
     catchUpPolicy: string;
-    variables: RoutineVariable[];
   }>({
     title: "",
     description: "",
@@ -102,7 +94,6 @@ export function Routines() {
     priority: "medium",
     concurrencyPolicy: "coalesce_if_active",
     catchUpPolicy: "skip_missed",
-    variables: [],
   });
 
   useEffect(() => {
@@ -124,12 +115,6 @@ export function Routines() {
     queryFn: () => projectsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
-  const { data: experimentalSettings } = useQuery({
-    queryKey: queryKeys.instance.experimentalSettings,
-    queryFn: () => instanceSettingsApi.getExperimental(),
-    retry: false,
-  });
-
   useEffect(() => {
     autoResizeTextarea(titleInputRef.current);
   }, [draft.title, composerOpen]);
@@ -149,7 +134,6 @@ export function Routines() {
         priority: "medium",
         concurrencyPolicy: "coalesce_if_active",
         catchUpPolicy: "skip_missed",
-        variables: [],
       });
       setComposerOpen(false);
       setAdvancedOpen(false);
@@ -187,21 +171,11 @@ export function Routines() {
   });
 
   const runRoutine = useMutation({
-    mutationFn: ({ id, data }: { id: string; data?: RoutineRunDialogSubmitData }) => routinesApi.run(id, {
-      ...(data?.variables && Object.keys(data.variables).length > 0 ? { variables: data.variables } : {}),
-      ...(data?.executionWorkspaceId !== undefined ? { executionWorkspaceId: data.executionWorkspaceId } : {}),
-      ...(data?.executionWorkspacePreference !== undefined
-        ? { executionWorkspacePreference: data.executionWorkspacePreference }
-        : {}),
-      ...(data?.executionWorkspaceSettings !== undefined
-        ? { executionWorkspaceSettings: data.executionWorkspaceSettings }
-        : {}),
-    }),
+    mutationFn: ({ id }: { id: string }) => routinesApi.run(id, {}),
     onMutate: ({ id }) => {
       setRunningRoutineId(id);
     },
     onSuccess: async (_, { id }) => {
-      setRunDialogRoutine(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.routines.list(selectedCompanyId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.routines.detail(id) }),
@@ -249,22 +223,11 @@ export function Routines() {
     () => new Map((projects ?? []).map((project) => [project.id, project])),
     [projects],
   );
-  const runDialogProject = runDialogRoutine?.projectId ? projectById.get(runDialogRoutine.projectId) ?? null : null;
   const currentAssignee = draft.assigneeAgentId ? agentById.get(draft.assigneeAgentId) ?? null : null;
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
 
   function handleRunNow(routine: RoutineListItem) {
-    const project = routine.projectId ? projectById.get(routine.projectId) ?? null : null;
-    const needsConfiguration = routineRunNeedsConfiguration({
-      variables: routine.variables ?? [],
-      project,
-      isolatedWorkspacesEnabled: experimentalSettings?.enableIsolatedWorkspaces === true,
-    });
-    if (needsConfiguration) {
-      setRunDialogRoutine(routine);
-      return;
-    }
-    runRoutine.mutate({ id: routine.id, data: {} });
+    runRoutine.mutate({ id: routine.id });
   }
 
   if (!selectedCompanyId) {
@@ -464,14 +427,6 @@ export function Routines() {
                   }
                 }}
               />
-              <div className="mt-3 space-y-3">
-                <RoutineVariablesHint />
-                <RoutineVariablesEditor
-                  description={draft.description}
-                  value={draft.variables}
-                  onChange={(variables) => setDraft((current) => ({ ...current, variables }))}
-                />
-              </div>
             </div>
 
             <div className="border-t border-border/60 px-5 py-3">
@@ -720,20 +675,6 @@ export function Routines() {
         )}
       </div>
 
-      <RoutineRunVariablesDialog
-        open={runDialogRoutine !== null}
-        onOpenChange={(next) => {
-          if (!next) setRunDialogRoutine(null);
-        }}
-        companyId={selectedCompanyId}
-        project={runDialogProject}
-        variables={runDialogRoutine?.variables ?? []}
-        isPending={runRoutine.isPending}
-        onSubmit={(data) => {
-          if (!runDialogRoutine) return;
-          runRoutine.mutate({ id: runDialogRoutine.id, data });
-        }}
-      />
     </div>
   );
 }

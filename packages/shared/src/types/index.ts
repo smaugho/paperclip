@@ -148,8 +148,6 @@ export type {
 } from "./workflow.js";
 export type {
   Routine,
-  RoutineVariable,
-  RoutineVariableDefaultValue,
   RoutineTrigger,
   RoutineRun,
   RoutineTriggerSecretMaterial,

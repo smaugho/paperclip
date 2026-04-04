@@ -57,7 +57,6 @@ export interface CompanyPortabilityProjectManifestEntry {
   metadata: Record<string, unknown> | null;
 }
 
-import type { RoutineVariable } from "./routine.js";
 
 export interface CompanyPortabilityProjectWorkspaceManifestEntry {
   key: string;
@@ -86,7 +85,6 @@ export interface CompanyPortabilityIssueRoutineTriggerManifestEntry {
 export interface CompanyPortabilityIssueRoutineManifestEntry {
   concurrencyPolicy: string | null;
   catchUpPolicy: string | null;
-  variables?: RoutineVariable[] | null;
   triggers: CompanyPortabilityIssueRoutineTriggerManifestEntry[];
 }
 
