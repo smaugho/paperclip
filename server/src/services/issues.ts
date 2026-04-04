@@ -1468,7 +1468,7 @@ export function issueService(db: Db) {
       if (
         issueData.status === "blocked" &&
         existing.status !== "blocked" &&
-        (await instanceSettings.getExperimental()).enforceBlockedOnValidation
+        updateExperimentalSettings.enforceBlockedOnValidation
       ) {
         const nextBlockedOn = issueData.blockedOn ?? existing.blockedOn;
         if (!nextBlockedOn) {
