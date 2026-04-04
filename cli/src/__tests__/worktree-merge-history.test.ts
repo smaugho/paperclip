@@ -29,6 +29,7 @@ function makeIssue(overrides: Record<string, unknown> = {}) {
     executionWorkspaceId: null,
     executionWorkspacePreference: null,
     executionWorkspaceSettings: null,
+    closeoutPolicy: null,
     startedAt: null,
     completedAt: null,
     cancelledAt: null,

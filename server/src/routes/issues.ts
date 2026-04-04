@@ -20,6 +20,7 @@ import {
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
+  type CloseoutPolicy,
 } from "@paperclipai/shared";
 import { trackAgentTaskCompleted } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
@@ -254,6 +255,55 @@ export function issueRoutes(
     }
 
     return runToInterrupt?.status === "running" ? runToInterrupt : null;
+  }
+
+  const CLOSEOUT_EXEMPT_MARKER = "[CLOSEOUT-EXEMPT]";
+
+  async function validateCloseout(
+    issueId: string,
+    policy: CloseoutPolicy,
+    closingComment: string | undefined,
+  ): Promise<{ valid: boolean; violations: string[] }> {
+    const violations: string[] = [];
+
+    const requiredTypes = policy.requiredWorkProductTypes;
+    if (requiredTypes && requiredTypes.length > 0) {
+      const workProducts = await workProductsSvc.listForIssue(issueId);
+      const presentTypes = new Set(workProducts.map((wp) => wp.type));
+      const missingTypes = requiredTypes.filter((t) => !presentTypes.has(t));
+      if (missingTypes.length > 0) {
+        violations.push(`Missing required work products: ${missingTypes.join(", ")}`);
+      }
+    }
+
+    if (violations.length === 0) return { valid: true, violations: [] };
+
+    const altEvidence = policy.acceptAlternativeEvidence;
+    if (altEvidence && altEvidence.length > 0) {
+      let altSatisfied = false;
+      for (const alt of altEvidence) {
+        if (alt === "document") {
+          const docs = await documentsSvc.listIssueDocuments(issueId);
+          if (docs.length > 0) { altSatisfied = true; break; }
+        } else if (alt === "attachment") {
+          const attachments = await svc.listAttachments(issueId);
+          if (attachments.length > 0) { altSatisfied = true; break; }
+        } else if (alt === "comment") {
+          if (closingComment && closingComment.trim().length > 0) { altSatisfied = true; break; }
+        }
+      }
+      if (altSatisfied) return { valid: true, violations: [] };
+    }
+
+    if (policy.allowExemption && closingComment && closingComment.includes(CLOSEOUT_EXEMPT_MARKER)) {
+      return { valid: true, violations: [] };
+    }
+
+    if (policy.allowExemption) {
+      violations.push(`Include "${CLOSEOUT_EXEMPT_MARKER}" in your closing comment to bypass requirements`);
+    }
+
+    return { valid: false, violations };
   }
 
   async function normalizeIssueIdentifier(rawId: string): Promise<string> {
@@ -1405,6 +1455,25 @@ export function issueRoutes(
     if (commentBody && reopenRequested === true && isClosed && updateFields.status === undefined) {
       updateFields.status = "todo";
     }
+
+    const effectiveStatus = updateFields.status ?? existing.status;
+    const isTransitioningToDone =
+      effectiveStatus === "done" && existing.status !== "done";
+    if (isTransitioningToDone && existing.closeoutPolicy && req.actor.type !== "board") {
+      const closeout = await validateCloseout(
+        id,
+        existing.closeoutPolicy as CloseoutPolicy,
+        commentBody,
+      );
+      if (!closeout.valid) {
+        res.status(422).json({
+          error: "Closeout requirements not met",
+          violations: closeout.violations,
+        });
+        return;
+      }
+    }
+
     let issue;
     try {
       issue = await svc.update(id, updateFields, {

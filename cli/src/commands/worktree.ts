@@ -2228,6 +2228,7 @@ async function applyMergePlan(input: {
         executionWorkspaceId: null,
         executionWorkspacePreference: null,
         executionWorkspaceSettings: null,
+        closeoutPolicy: issue.source.closeoutPolicy,
         startedAt: issue.source.startedAt,
         completedAt: issue.source.completedAt,
         cancelledAt: issue.source.cancelledAt,

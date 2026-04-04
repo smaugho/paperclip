@@ -157,6 +157,7 @@ describe("optimistic issue comments", () => {
         executionWorkspaceId: null,
         executionWorkspacePreference: null,
         executionWorkspaceSettings: null,
+        closeoutPolicy: null,
         startedAt: null,
         completedAt: null,
         cancelledAt: null,
