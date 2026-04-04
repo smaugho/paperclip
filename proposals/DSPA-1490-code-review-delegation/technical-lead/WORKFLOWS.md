@@ -348,95 +348,79 @@ graph TD
 
 ### 4b. Workflow: Technical Review
 
-**Objective:** Review engineering deliverables (PRs, plans, architecture decisions, task completions) for quality, correctness, and compliance with contribution standards.
+**Objective:** Review engineering deliverables for architecture alignment, plan quality, and task completion. For PRs: the DevSecFinOps Engineer (DE) handles detailed quality review (code quality, tests, security, standards); the TL performs optional architecture sign-off when notified by DE, and reviews plans, architecture decisions, and task completions directly.
 
-**Trigger:** A direct report requests review (comment mention, PR link posted, task status moved to `in_review`), OR you discover unreviewed work during oversight (Workflow 4c).
+**Trigger:** DE notifies you that a PR needs architecture sign-off, OR a direct report requests plan/architecture review, OR you discover unreviewed work during oversight (Workflow 4c).
 
 **Preconditions:** Deliverable exists and is accessible. You have context on what was requested (parent issue, acceptance criteria).
 
-**Inputs:** PR link or task ID, acceptance criteria from the original subtask, contribution standards from `AGENTS.md` (`CS-1` through `CS-7`).
+**Inputs:** PR link or task ID, acceptance criteria from the original subtask, DE review summary (for PRs).
 
-**External references:** Contribution standards live in `AGENTS.md`, section `Contribution Standards`.
+**Review chain:** IC finishes work → creates PR → sets `in_review` → mentions DE. DE reviews quality (tests, security, standards, CS compliance) → approves or rejects. If approved and architecture-relevant, DE notifies TL. TL does lightweight architecture check if needed. TL still owns: upstream PR gate, task routing, plan review.
 
 #### Mermaid Diagram
 
 ```mermaid
 graph TD
     A([Review requested or discovered]) --> B[Read original task + acceptance criteria]
-    B --> B2[Post acknowledgment comment:\nreview queued + expected timeframe]
-    B2 --> C[Read deliverable: PR diff, plan doc, or task output]
-    C --> D{Deliverable type?}
-    D -- PR --> E[Check PR: scope, branch target, commit hygiene]
-    D -- Plan/Architecture --> F[Check plan: completeness, feasibility, risks]
-    D -- Task completion --> G[Check task: acceptance criteria met, evidence provided]
-    E --> H{PR passes checks?}
-    F --> H
-    G --> H
-    H -- Yes --> I{Verification evidence provided?}
-    I -- Yes --> J[Approve: post approval comment with summary]
-    I -- No --> K[Request verification: ask for typecheck/test/build evidence]
-    K --> L[Set task back to in_progress]
-    L --> Z([Exit])
-    H -- No --> M{Issues are blocking or advisory?}
-    M -- Blocking --> N[Reject: post specific actionable feedback]
-    N --> O[Set task back to in_progress with revision instructions]
-    O --> Z
-    M -- Advisory --> P[Approve with notes: post approval + suggestions]
-    P --> Z
-    J --> Q[Update parent task with review outcome]
-    Q --> R{Parent task fully complete?}
-    R -- Yes --> S[Mark parent task in_review + post summary]
-    R -- No --> Z
-    S --> Z
+    B --> B2[Post acknowledgment comment]
+    B2 --> C{Deliverable type?}
+    C -- PR with DE approval --> D[Read DE review summary]
+    D --> E{Architecture-relevant?\nShared interfaces, new patterns,\nsystem-level changes?}
+    E -- Yes --> F[Architecture review:\nApproach sound? Patterns consistent?\nScaling concerns?]
+    E -- No --> G[Acknowledge DE approval\nNo architecture sign-off needed]
+    C -- Plan/Architecture --> H[Review plan: completeness,\nfeasibility, risks, approach]
+    C -- Task completion --> I[Check: acceptance criteria met,\nevidence provided]
+    F --> J{Architecture OK?}
+    H --> J
+    I --> J
+    J -- Yes --> K[Approve: post approval comment]
+    J -- No, blocking --> L[Reject: post architectural feedback\nSet task back to in_progress]
+    J -- Advisory --> M[Approve with architectural notes]
+    G --> N[Update parent task if applicable]
+    K --> N
+    L --> N
+    M --> N
+    N --> O{Upstream PR gate?}
+    O -- Yes --> P[Verify board authorization\nbefore upstream PR proceeds]
+    O -- No --> Q([Exit])
+    P --> Q
 ```
 
 #### Checklist
 
 - [ ] **Step 1: Retrieve context.** Read the original task that spawned this deliverable. Note acceptance criteria.
   - Evidence: Acceptance criteria list identified.
-- [ ] **Step 1b: Acknowledge review receipt.** Post a brief comment on the review issue confirming the review is queued and expected timeframe.
-  - Format: "Review queued. Expected completion within {estimate based on current queue depth, max 12 hours}."
-  - Evidence: Acknowledgment comment posted with comment ID.
-- [ ] **Step 2: Read the deliverable.** For PRs: read the diff, check branch, check commit messages. For plans: read the full document. For task completions: read the output/comments.
-  - Evidence: You can describe what the deliverable contains.
-- [ ] **Step 2b: Scan the full PR conversation surface before judging readiness.** For PR deliverables, review the top-level PR comments, review summaries, and inline review comments/threads.
-  - Treat any unresolved reviewer ask, open thread, or still-unanswered board/user concern as blocking until it is explicitly addressed or intentionally deferred with justification.
-  - Do not approve a PR or treat it as fully addressed while open PR comment/review-thread concerns remain.
-  - Evidence: "no unresolved/open PR comments or review threads" or a list of blocking threads returned to the engineer.
-- [ ] **Step 3: Check scope compliance.** Does the deliverable match what was asked? No scope creep, no missing requirements?
-  - Evidence: Each acceptance criterion checked off or noted as missing.
-- [ ] **Step 3b: Check staged-transition cleanup coverage.** If the deliverable introduces a compatibility alias, transition window, staged migration, or temporary fallback surface:
-  - Verify a linked cleanup task exists in Paperclip.
-  - Verify the cleanup path names an owner, defines the transition window, states removal criteria, and explains the validation path for final retirement.
-  - If any of those are missing: reject the deliverable as incomplete.
-  - Evidence: Cleanup task identifier linked.
-- [ ] **Step 4: Check contribution standards.** Use `AGENTS.md`, section `Contribution Standards` (`CS-1` through `CS-7`). For PRs:
-  - [ ] 4a. Correct branch target (PR branch from `master`, work in agent's dedicated worktree)?
-  - [ ] 4b. No stray commits or unrelated changes?
-  - [ ] 4c. Single commit or justified multi-commit?
-  - [ ] 4d. PR description adequate?
-  - [ ] 4e. For upstream PRs: no private-instance references (`CS-8`)? PR title and body are self-contained for external contributors (no `DSPA-*`, no internal URLs, no private agent IDs)?
-- [ ] **Step 5: Check verification evidence.** Did the engineer run `pnpm -r typecheck && pnpm test:run && pnpm build` (or equivalent)?
-  - If no evidence: request it before approving.
-- [ ] **Step 5b: UI/Web Evidence Check (for frontend-touching deliverables).**
-  - Does the deliverable touch frontend code, UI components, API contracts consumed by the UI, or user-visible behavior?
-  - If YES: require evidence from a running browser showing the feature working.
-  - Minimum approval evidence: exact route/path verified + screenshot captured with `mcp__playwright__browser_take_screenshot` + PASS/FAIL verdict on user-visible behavior.
-  - `browser_snapshot` may be reviewed as additional context, but it is not a substitute for the screenshot proof.
-  - If the screenshot, route/path, or PASS/FAIL verdict is missing: request it before approving. Do not approve frontend work without browser proof.
-  - If the engineer is blocked on Playwright MCP or the dev server: verify the blocker is legitimate (did they try `/mcp reconnect`? Is Playwright MCP available in their tool list?). Require the task to remain `blocked` and require the blocker comment to preserve what was verified via code inspection. Do not approve the deliverable until browser validation is completed.
-- [ ] **Step 5c: API documentation coverage check.** Does the deliverable add, modify, or remove API endpoints?
-  - If YES: verify that the relevant API documentation surface has been updated in the PR/deliverable. If API documentation is missing or incomplete, request it before approving.
-  - If NO: skip this check.
-  - Evidence: API doc update confirmed in deliverable, or "no API changes"
-- [ ] **Step 6: Decide outcome (with open-comment re-verification gate).**
-  - **6a. Re-scan gate (BLOCKING):** Before deciding any outcome, re-scan the full PR conversation surface one final time. Enumerate ALL currently-open/unresolved comments and review threads. If ANY remain that were not present in Step 2b, add them to the blocking list. Do NOT approve while any open comment or thread remains unaddressed.
-  - **6b. Decide:**
-    - **Approve**: All open comments/threads confirmed resolved. Post approval comment summarizing what was reviewed and why it passes.
-    - **Approve with notes**: All open comments/threads confirmed resolved. Post approval + advisory suggestions for future improvement.
-    - **Reject**: Post specific, actionable feedback including any unresolved threads. Set task back to `in_progress`.
-  - Evidence: `All {N} open comments/threads confirmed resolved` or list of blocking threads returned to engineer.
-- [ ] **Step 6d: Work product reconciliation (for PR deliverables).** After approving a PR, trigger reconciliation to update PR state labels:
+- [ ] **Step 1b: Acknowledge review receipt.** Post a brief comment confirming review is queued.
+  - Evidence: Acknowledgment comment posted.
+- [ ] **Step 2: Determine deliverable type and review scope.**
+  - **PR (DE-approved):** DE has already reviewed quality, tests, security, CS compliance. Your scope is architecture only.
+  - **PR (not yet DE-reviewed):** Route to DE for quality review first. Do not duplicate the DE's quality checklist.
+  - **Plan/Architecture:** Full review — completeness, feasibility, risks, approach.
+  - **Task completion:** Check acceptance criteria met and evidence provided.
+  - Evidence: Review scope identified.
+- [ ] **Step 3: For PRs — Architecture review (lightweight).**
+  - Read the DE's review summary to understand what was checked.
+  - Assess: Does the approach align with existing architecture? Does it introduce new patterns that need discussion? Are there scaling or maintainability concerns?
+  - Check staged-transition cleanup coverage: if the deliverable introduces a compatibility alias, transition window, or temporary fallback, verify a cleanup task exists with owner, window, removal criteria, and retirement validation.
+  - For upstream PRs: verify `CS-8` (no private-instance references) and confirm board authorization exists.
+  - Evidence: Architecture assessment noted.
+- [ ] **Step 4: For plans/architecture — Full review.**
+  - Completeness: all requirements addressed?
+  - Feasibility: can the team execute this?
+  - Risks: what could go wrong? Mitigations identified?
+  - Approach: is this the right way to solve the problem?
+  - Evidence: Plan review assessment noted.
+- [ ] **Step 5: For task completions — Acceptance criteria check.**
+  - Each criterion checked off or noted as missing.
+  - Evidence provided by engineer.
+  - Evidence: Acceptance criteria status.
+- [ ] **Step 6: Decide outcome.**
+  - **Approve**: Post approval comment summarizing architectural assessment.
+  - **Approve with notes**: Post approval + architectural suggestions.
+  - **Reject**: Post specific, actionable architectural feedback. Set task back to `in_progress`.
+  - Evidence: Decision and rationale posted.
+- [ ] **Step 6b: Work product reconciliation (for PR deliverables).** After approving, trigger reconciliation:
   ```bash
   curl -s -X POST \
     -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
@@ -444,7 +428,6 @@ graph TD
     -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
     "$PAPERCLIP_API_URL/api/issues/{issueId}/work-products/reconcile"
   ```
-  This updates PR status (open/merged/closed) and applies extension labels (Merged, Upstream PR, Upstream Merged).
   - Evidence: Reconciliation triggered (or skipped if no work products registered)
 - [ ] **Step 7: Update parent task.** Post a comment on the parent task noting the review outcome.
   - If all subtasks under the parent are now complete: mark parent as `in_review` with a summary. Use `done` only for housekeeping tasks.
@@ -455,16 +438,19 @@ graph TD
 - Task status reflects the review outcome (done, in_progress, or blocked).
 - Parent task updated if applicable.
 - For PR deliverables: work product reconciliation triggered.
+- For PRs: TL did NOT duplicate DE's quality checklist (no CS-1 through CS-7 re-checks, no security/test/error-handling re-review).
 
 #### Blocked/Escalation
 
-- If the deliverable reveals a design flaw that requires Director input: set to `blocked`, escalate with analysis.
-- If the deliverable involves an upstream PR: remind the engineer of the upstream PR gate (board-only).
+- If the deliverable reveals an architecture flaw that requires Director input: set to `blocked`, escalate with analysis.
+- If the deliverable involves an upstream PR: enforce the upstream PR gate (board-only authorization required).
 - If you cannot access the PR (permissions): escalate to the Director.
+- If DE has not yet reviewed a PR that arrives at your queue: route it to DE first. Do not perform the quality review yourself.
 
 #### Exit Criteria
 
 - Every deliverable in the review queue has a review comment and updated status. Parent tasks reflect downstream completion.
+- PRs were reviewed for architecture only (quality review confirmed as DE's domain).
 
 ---
 

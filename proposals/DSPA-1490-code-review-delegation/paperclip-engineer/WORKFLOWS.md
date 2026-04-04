@@ -824,7 +824,7 @@ graph TD
   - Evidence: Merge completed
 - [ ] Step 13: Update task status and post completion comment
   - Set to `in_review` (not `done`) for completed domain work. Use `done` only for housekeeping tasks.
-  - IF setting `in_review`: the comment MUST include a wake-triggering mention of the reviewer/manager using `[@AgentName](agent://<agent-uuid>)` syntax. The `agent://` URI triggers the heartbeat wake. Profile links (`/DSPA/agents/...`) do NOT trigger wakes. Identify the reviewer from `chainOfCommand` (typically the first entry, your direct manager).
+  - IF setting `in_review` for work with a PR: the comment MUST include a wake-triggering mention of `[@DevSecFinOps Engineer](agent://ce6f0942-0925-4d84-a99f-aca6943effbe)` for code quality review. The `agent://` URI triggers the heartbeat wake. Profile links (`/DSPA/agents/...`) do NOT trigger wakes. For non-PR deliverables or escalation, identify the reviewer from `chainOfCommand`.
   - Evidence: Task status updated, comment posted with wake-triggering mention
 
 #### Validation
@@ -845,7 +845,7 @@ graph TD
 
 - Code change verified, committed, and (if applicable) PR created with link posted.
 - Task status set to `in_review` with review-ready evidence in the comment (per dspot-company-rules Task Completion and Review Handoff). Use `done` only for housekeeping tasks.
-- When setting `in_review`: comment includes wake-triggering `[@Name](agent://<uuid>)` mention of reviewer (not a profile link). Identify the reviewer from `chainOfCommand` (typically the first entry, your direct manager).
+- When setting `in_review` for PR work: comment includes wake-triggering mention of `[@DevSecFinOps Engineer](agent://ce6f0942-0925-4d84-a99f-aca6943effbe)` for code quality review (not a profile link). For non-PR deliverables, identify the reviewer from `chainOfCommand`.
 
 #### Loop Rules
 
@@ -1118,7 +1118,7 @@ graph TD
 #### Checklist
 
 - [ ] Step 1: Comment on any in_progress work before exiting
-  - IF setting `in_review`: the comment MUST include a wake-triggering mention of the reviewer/manager using `[@AgentName](agent://<agent-uuid>)` syntax. The `agent://` URI triggers the heartbeat wake. Profile links (`/DSPA/agents/...`) do NOT trigger wakes. Identify the reviewer from `chainOfCommand` (typically the first entry, your direct manager).
+  - IF setting `in_review` for work with a PR: the comment MUST include a wake-triggering mention of `[@DevSecFinOps Engineer](agent://ce6f0942-0925-4d84-a99f-aca6943effbe)` for code quality review. The `agent://` URI triggers the heartbeat wake. Profile links (`/DSPA/agents/...`) do NOT trigger wakes. For non-PR deliverables or escalation, identify the reviewer from `chainOfCommand`.
   - Evidence: All in_progress tasks have current status comments (with wake-triggering mentions where applicable)
 - [ ] Step 2: If no assignments and no valid mention-handoff, exit cleanly
   - Evidence: Clean exit or handoff processed
@@ -1146,7 +1146,7 @@ graph TD
 
 #### Exit Criteria
 
-- All work documented. Exit summary includes disposition for every assigned task (no omissions). No task left in `todo` status when it has unmet dependencies. When setting `in_review`: comment includes wake-triggering `[@Name](agent://<uuid>)` mention of reviewer (not a profile link). Clean exit.
+- All work documented. Exit summary includes disposition for every assigned task (no omissions). No task left in `todo` status when it has unmet dependencies. When setting `in_review` for PR work: comment includes wake-triggering mention of `[@DevSecFinOps Engineer](agent://ce6f0942-0925-4d84-a99f-aca6943effbe)` for code review. For non-PR deliverables, mention reviewer from `chainOfCommand`. Clean exit.
 
 ---
 

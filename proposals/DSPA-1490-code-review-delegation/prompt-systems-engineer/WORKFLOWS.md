@@ -225,7 +225,7 @@ graph TD
 - [ ] Step 8: Execute domain work (see domain workflows below)
 - [ ] Step 9: Update issue status via PATCH /api/issues/{id} with comment — Evidence: status updated
   - Set to `in_review` (not `done`) for completed domain work, with review-ready evidence in the comment. Use `done` only for housekeeping tasks (per Task Completion and Review Handoff rule)
-  - IF setting `in_review`: the comment MUST include a wake-triggering mention of the reviewer/manager using `[@AgentName](agent://<agent-uuid>)` syntax. The `agent://` URI triggers the heartbeat wake. Profile links (`/DSPA/agents/...`) do NOT trigger wakes. Identify the reviewer from `chainOfCommand` (typically the first entry, your direct manager).
+  - IF setting `in_review` for work with a PR: the comment MUST include a wake-triggering mention of `[@DevSecFinOps Engineer](agent://ce6f0942-0925-4d84-a99f-aca6943effbe)` for code quality review. The `agent://` URI triggers the heartbeat wake. Profile links (`/DSPA/agents/...`) do NOT trigger wakes. For non-PR deliverables or escalation, identify the reviewer from `chainOfCommand`.
   - IF blocked: set status to blocked with blocker explanation before exiting
   - IF blocked AND blocker is another issue: include `Blocked-By: [ISSUE-ID](/DSPA/issues/ISSUE-ID)` on its own line per Dependency Declaration rule
   - IF blocked AND blocker is review/human-action (not an issue): describe in prose, do NOT use `Blocked-By:` format
@@ -256,7 +256,7 @@ graph TD
 - All in_progress tasks have an exit comment
 - Status updates posted for all worked tasks
 - Task status set to `in_review` for completed domain work (not `done`). `done` used only for housekeeping tasks.
-- When setting `in_review`: comment includes wake-triggering `[@Name](agent://<uuid>)` mention of reviewer (not a profile link)
+- When setting `in_review` for PR work: comment includes wake-triggering mention of `[@DevSecFinOps Engineer](agent://ce6f0942-0925-4d84-a99f-aca6943effbe)` for code review. For non-PR deliverables, mention reviewer from `chainOfCommand`
 - Exit summary includes disposition for every assigned task (no omissions)
 - If `dependency_resolved` wake: blocked task transitioned to `todo` (all deps resolved) or kept `blocked` with partial-resolution comment
 

@@ -18,6 +18,7 @@ Run this checklist on every heartbeat. This covers instruction validation, ident
 | 7 | Operational Readiness and Monitoring Review | task-triggered | on-demand | ops task assigned |
 | 8 | Platform Support | task-triggered | on-demand | support request assigned |
 | 9 | Fork Origin/Master Sync (Staging Pattern) | periodic | recurring (every heartbeat with infra task or daily cadence) | master != origin/master (verified in staging worktree) |
+| 10 | Code Review | task-triggered | on-demand | IC agent sets task to `in_review` and mentions DE, or PR review requested |
 
 **Workflow label ID:** `3b18b6d1-385b-48c2-8660-68b66433e9ec`
 **Scheduled label ID:** `b87aa6aa-482e-4856-acde-40ed817d4360`
@@ -973,7 +974,164 @@ graph TD
 
 ---
 
-## 10. Update and Exit
+## 10. Workflow: Code Review
+
+**Objective:** Review fork PRs from IC agents (PE, PFE, PSE) for quality, correctness, security, and compliance with contribution standards. Approve or reject with actionable feedback. Notify TL when architecture sign-off may be needed.
+
+**Trigger:** IC agent sets task to `in_review` and mentions DE, or PR review is requested by TL or another agent.
+
+**Preconditions:** PR exists and is accessible. Source task context is available. Contribution standards (`CS-1` through `CS-13`) loaded from TL AGENTS.md or dspot-company-rules.
+
+**Inputs:** PR link or task ID, acceptance criteria from the originating subtask, contribution standards.
+
+### Mermaid Diagram
+
+```mermaid
+graph TD
+    A([Review requested]) --> B[Read source task + acceptance criteria]
+    B --> C[Read PR diff + commit history]
+    C --> D[Check 1: Scope — matches task, no stray changes]
+    D --> E[Check 2: CS standards — fork workflow, branch target,\ncommit hygiene, PR description quality]
+    E --> F[Check 3: Test coverage — tests for new behavior,\nnot just passing]
+    F --> G[Check 4: Error handling — error paths,\nstatus codes, edge cases]
+    G --> H[Check 5: Security — SQL injection, XSS,\ninput validation, secrets, OWASP]
+    H --> I[Check 6: Feature flag discipline CS-9 —\nflags for behavior changes, old path preserved,\ncleanup task linked]
+    I --> J[Check 7: Branch-by-abstraction —\nrefactors preserve old interface]
+    J --> K[Check 8: Performance — N+1, unbounded loops,\nmissing pagination, large payloads]
+    K --> L[Check 9: DB migration safety —\nreversible, table locks, backfill]
+    L --> M[Check 10: Dependency audit —\nnecessary, known vulnerabilities]
+    M --> N[Check 11: Verification evidence —\ntypecheck + test + build proof]
+    N --> O{Frontend PR?}
+    O -- Yes --> P[Check 12: UI/browser evidence —\nscreenshot + route + PASS/FAIL]
+    O -- No --> Q[Check 13: API documentation —\nnew/changed endpoints documented]
+    P --> Q
+    Q --> R[Check 14: PR comment thread scan —\nno unresolved comments]
+    R --> S{All checks pass?}
+    S -- Yes --> T[Approve: post approval summary]
+    S -- No, blocking --> U[Reject: post specific actionable feedback\nSet task back to in_progress]
+    S -- No, advisory --> V[Approve with notes: post suggestions]
+    T --> W{Architecture sign-off needed?}
+    V --> W
+    W -- Yes --> X[Notify TL: post comment mentioning\n@Technical Lead with review summary]
+    W -- No --> Y[Update task status]
+    X --> Y
+    U --> Y
+    Y --> Z([Exit])
+```
+
+### Checklist
+
+- [ ] **Step 1: Retrieve context.** Read the source task (acceptance criteria, parent chain, goalId). Understand what was requested.
+  - Evidence: Acceptance criteria identified.
+- [ ] **Step 2: Read the PR.** Read the full diff, commit messages, branch target.
+  - Evidence: PR contents summarized.
+- [ ] **Step 3: Scope check.** Does the PR match the task? No scope creep, no missing requirements, no stray changes?
+  - Evidence: Each acceptance criterion checked.
+- [ ] **Step 4: CS standards compliance.** Check against contribution standards:
+  - [ ] 4a. `CS-1` Fork-based workflow — changes go through `smaugho/paperclip` fork
+  - [ ] 4b. `CS-2` Branch targeting — PR branch from `master`, work in agent's dedicated worktree
+  - [ ] 4c. `CS-4` Commit hygiene — tight scope, no stray changes, single commit or justified multi-commit
+  - [ ] 4d. `CS-5` PR quality — description explains what, why, and verification steps
+  - [ ] 4e. `CS-8` Upstream PR clarity (if applicable) — no private-instance references
+  - [ ] 4f. `CS-10` Mandatory PR — PR exists for the code change
+  - [ ] 4g. `CS-12` PR comment prefix — GitHub PR comments use correct agent prefix
+  - Evidence: Per-standard compliance noted.
+- [ ] **Step 5: Test coverage.** Are there tests for new behavior? Not just "existing tests pass" but "tests exist for what was added/changed."
+  - Evidence: Test coverage assessment.
+- [ ] **Step 6: Error handling.** Are error paths handled? Proper status codes? Edge cases considered?
+  - Evidence: Error handling assessment.
+- [ ] **Step 7: Security scan.** Check for OWASP basics:
+  - [ ] 7a. SQL injection — parameterized queries, no string interpolation in SQL
+  - [ ] 7b. XSS — output encoding, no raw HTML insertion
+  - [ ] 7c. Input validation — user inputs validated at boundaries
+  - [ ] 7d. Secrets exposure — no hardcoded secrets, tokens, API keys
+  - [ ] 7e. Authentication/authorization — protected routes stay protected
+  - Evidence: Security assessment with severity if issues found.
+- [ ] **Step 8: Feature flag discipline (CS-9).** Does the PR modify existing behavior?
+  - IF yes: verify feature flag (default off), old code path preserved, cleanup task linked
+  - IF no: note "no behavior modification, CS-9 not applicable"
+  - Evidence: CS-9 compliance or non-applicability noted.
+- [ ] **Step 9: Branch-by-abstraction.** Does the PR refactor existing interfaces?
+  - IF yes: verify old interface preserved behind abstraction, rollback possible without revert
+  - IF no: note "no interface refactoring"
+  - Evidence: Assessment noted.
+- [ ] **Step 10: Performance basics.**
+  - [ ] 10a. N+1 queries — no loops issuing individual DB queries
+  - [ ] 10b. Unbounded loops — all loops have bounded iteration
+  - [ ] 10c. Missing pagination — list endpoints use pagination
+  - [ ] 10d. Large payloads — responses are reasonably sized
+  - Evidence: Performance assessment.
+- [ ] **Step 11: Database migration safety (if applicable).**
+  - [ ] 11a. Reversible — migration can be rolled back
+  - [ ] 11b. Table locks — no long-running locks on production tables
+  - [ ] 11c. Data backfill — backfill steps documented if needed
+  - IF no migrations: note "no DB migrations"
+  - Evidence: Migration safety assessment.
+- [ ] **Step 12: Dependency audit (if new deps added).**
+  - [ ] 12a. Necessary — new dependency is justified
+  - [ ] 12b. Known vulnerabilities — no known CVEs
+  - IF no new deps: note "no new dependencies"
+  - Evidence: Dependency assessment.
+- [ ] **Step 13: Verification evidence.** Did the engineer provide proof of `pnpm -r typecheck && pnpm test:run && pnpm build`?
+  - IF no evidence: request it before approving
+  - Evidence: Verification proof confirmed or requested.
+- [ ] **Step 14: UI/browser evidence (for frontend-touching PRs).**
+  - Does the PR touch frontend code, UI components, or user-visible behavior?
+  - IF yes: require screenshot + exact route + PASS/FAIL verdict
+  - IF no: note "no frontend changes"
+  - Evidence: Browser proof confirmed or not applicable.
+- [ ] **Step 15: API documentation (if API endpoints added/changed/removed).**
+  - IF yes: verify documentation updated in PR
+  - IF no: note "no API changes"
+  - Evidence: API doc coverage confirmed or not applicable.
+- [ ] **Step 16: PR comment thread scan.** Scan full PR conversation surface — top-level comments, review summaries, inline threads.
+  - All must be resolved before approval
+  - Evidence: "No unresolved comments" or list of blocking threads.
+- [ ] **Step 17: Decide outcome.**
+  - **Approve**: All checks pass. Post approval comment summarizing what was reviewed.
+  - **Approve with notes**: All checks pass but advisory suggestions exist. Post approval + suggestions.
+  - **Reject**: Blocking issues found. Post specific, actionable feedback. Set task back to `in_progress` with revision instructions.
+  - Evidence: Decision and rationale posted.
+- [ ] **Step 18: Architecture sign-off decision.** Does the PR change shared interfaces, introduce new patterns, or affect system architecture?
+  - IF yes: post comment mentioning `[@Technical Lead](agent://b29ce3eb-7a67-41db-a194-ef82dd0cc3cf)` with a review summary and request for architecture sign-off
+  - IF no: no TL notification needed
+  - Evidence: TL notified or "no architecture impact"
+- [ ] **Step 19: Work product reconciliation.** After approving, trigger reconciliation:
+  ```bash
+  curl -s -X POST \
+    -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+    -H "Content-Type: application/json" \
+    -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+    "$PAPERCLIP_API_URL/api/issues/{issueId}/work-products/reconcile"
+  ```
+  - Evidence: Reconciliation triggered.
+- [ ] **Step 20: Update task status.**
+  - IF approved: mark task `done` and post approval summary
+  - IF rejected: set task back to `in_progress` with revision instructions and re-assign to the PR author
+  - Evidence: Task status updated.
+
+### Validation
+
+- Review comment posted on the PR/task with per-check findings
+- Task status reflects the review outcome
+- For approved PRs: work product reconciliation triggered
+- If architecture sign-off needed: TL mentioned with review summary
+
+### Blocked/Escalation
+
+- If PR reveals a design flaw beyond code quality (architecture concern): notify TL with analysis, set to `blocked` pending architecture decision
+- If PR requires access or context you don't have: post blocked comment, escalate to TL
+- If the PR author is unresponsive to revision requests after 24 hours: escalate to TL
+
+### Exit Criteria
+
+- Every PR in the review queue has a review comment and updated task status
+- Approved PRs have work product reconciliation triggered
+- TL notified for PRs needing architecture sign-off
+
+---
+
+## 11. Update and Exit
 
 After completing task work (or if no assignments exist):
 
