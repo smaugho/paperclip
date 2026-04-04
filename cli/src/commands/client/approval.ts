@@ -13,6 +13,7 @@ import {
   handleCommandError,
   printOutput,
   resolveCommandContext,
+  resolveTextOption,
   type BaseClientOptions,
 } from "./common.js";
 
@@ -23,6 +24,7 @@ interface ApprovalListOptions extends BaseClientOptions {
 
 interface ApprovalDecisionOptions extends BaseClientOptions {
   decisionNote?: string;
+  decisionNoteFile?: string;
   decidedByUserId?: string;
 }
 
@@ -39,7 +41,8 @@ interface ApprovalResubmitOptions extends BaseClientOptions {
 }
 
 interface ApprovalCommentOptions extends BaseClientOptions {
-  body: string;
+  body?: string;
+  bodyFile?: string;
 }
 
 export function registerApprovalCommands(program: Command): void {
@@ -140,12 +143,14 @@ export function registerApprovalCommands(program: Command): void {
       .description("Approve an approval request")
       .argument("<approvalId>", "Approval ID")
       .option("--decision-note <text>", "Decision note")
+      .option("--decision-note-file <path>", "Read decision note from file (mutually exclusive with --decision-note)")
       .option("--decided-by-user-id <id>", "Decision actor user ID")
       .action(async (approvalId: string, opts: ApprovalDecisionOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const decisionNote = resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file");
           const payload = resolveApprovalSchema.parse({
-            decisionNote: opts.decisionNote,
+            decisionNote,
             decidedByUserId: opts.decidedByUserId,
           });
           const updated = await ctx.api.post<Approval>(`/api/approvals/${approvalId}/approve`, payload);
@@ -162,12 +167,14 @@ export function registerApprovalCommands(program: Command): void {
       .description("Reject an approval request")
       .argument("<approvalId>", "Approval ID")
       .option("--decision-note <text>", "Decision note")
+      .option("--decision-note-file <path>", "Read decision note from file (mutually exclusive with --decision-note)")
       .option("--decided-by-user-id <id>", "Decision actor user ID")
       .action(async (approvalId: string, opts: ApprovalDecisionOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const decisionNote = resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file");
           const payload = resolveApprovalSchema.parse({
-            decisionNote: opts.decisionNote,
+            decisionNote,
             decidedByUserId: opts.decidedByUserId,
           });
           const updated = await ctx.api.post<Approval>(`/api/approvals/${approvalId}/reject`, payload);
@@ -184,12 +191,14 @@ export function registerApprovalCommands(program: Command): void {
       .description("Request revision for an approval")
       .argument("<approvalId>", "Approval ID")
       .option("--decision-note <text>", "Decision note")
+      .option("--decision-note-file <path>", "Read decision note from file (mutually exclusive with --decision-note)")
       .option("--decided-by-user-id <id>", "Decision actor user ID")
       .action(async (approvalId: string, opts: ApprovalDecisionOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const decisionNote = resolveTextOption(opts.decisionNote, opts.decisionNoteFile, "--decision-note", "--decision-note-file");
           const payload = requestApprovalRevisionSchema.parse({
-            decisionNote: opts.decisionNote,
+            decisionNote,
             decidedByUserId: opts.decidedByUserId,
           });
           const updated = await ctx.api.post<Approval>(`/api/approvals/${approvalId}/request-revision`, payload);
@@ -225,12 +234,17 @@ export function registerApprovalCommands(program: Command): void {
       .command("comment")
       .description("Add comment to an approval")
       .argument("<approvalId>", "Approval ID")
-      .requiredOption("--body <text>", "Comment body")
+      .option("--body <text>", "Comment body")
+      .option("--body-file <path>", "Read comment body from file (mutually exclusive with --body)")
       .action(async (approvalId: string, opts: ApprovalCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const body = resolveTextOption(opts.body, opts.bodyFile, "--body", "--body-file");
+          if (!body) {
+            throw new Error("Either --body or --body-file is required");
+          }
           const created = await ctx.api.post<ApprovalComment>(`/api/approvals/${approvalId}/comments`, {
-            body: opts.body,
+            body,
           });
           printOutput(created, { json: ctx.json });
         } catch (err) {

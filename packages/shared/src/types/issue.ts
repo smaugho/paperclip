@@ -1,4 +1,4 @@
-import type { IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
+import type { BlockedOnKind, IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
 import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
@@ -107,6 +107,7 @@ export interface Issue {
   title: string;
   description: string | null;
   status: IssueStatus;
+  blockedOn: BlockedOnKind | null;
   priority: IssuePriority;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
@@ -177,4 +178,24 @@ export interface IssueAttachment {
   createdAt: Date;
   updatedAt: Date;
   contentPath: string;
+}
+
+export interface IssueDependency {
+  id: string;
+  companyId: string;
+  issueId: string;
+  blockerIssueId: string;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  createdAt: Date;
+}
+
+export interface IssueDependencySummary {
+  id: string;
+  issueId: string;
+  blockerIssueId: string;
+  blockerIdentifier: string | null;
+  blockerTitle: string;
+  blockerStatus: string;
+  createdAt: Date;
 }

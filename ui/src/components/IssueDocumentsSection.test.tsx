@@ -192,6 +192,7 @@ function createIssue(): Issue {
     createdByUserId: "user-1",
     issueNumber: 807,
     requestDepth: 0,
+    blockedOn: null,
     billingCode: null,
     assigneeAdapterOverrides: null,
     executionWorkspaceId: null,

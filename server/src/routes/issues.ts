@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
+  addIssueDependencySchema,
   createIssueAttachmentMetadataSchema,
   createIssueWorkProductSchema,
   createIssueLabelSchema,
@@ -33,6 +34,7 @@ import {
   heartbeatService,
   instanceSettingsService,
   issueApprovalService,
+  issueDependencyService,
   issueService,
   documentService,
   logActivity,
@@ -43,6 +45,7 @@ import {
 import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { parseGitHubPrUrl, reconcilePrState } from "../services/github-pr-reconcile.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
@@ -79,12 +82,31 @@ export function issueRoutes(
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const workProductsSvc = workProductService(db);
   const documentsSvc = documentService(db);
+  const depsSvc = issueDependencyService(db);
   const routinesSvc = routineService(db);
   const feedbackExportService = opts?.feedbackExportService;
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
   });
+
+  async function assertDependenciesEnabled(res: Response): Promise<boolean> {
+    const { enableDependencies } = await instanceSettings.getExperimental();
+    if (!enableDependencies) {
+      res.status(403).json({ error: "Dependencies feature is not enabled. Enable the 'enableDependencies' experimental flag in instance settings." });
+      return false;
+    }
+    return true;
+  }
+
+  async function assertWorkProductsEnabled(res: Response): Promise<boolean> {
+    const { enableWorkProducts } = await instanceSettings.getExperimental();
+    if (!enableWorkProducts) {
+      res.status(403).json({ error: "Work products feature is not enabled. Enable the 'enableWorkProducts' experimental flag in instance settings." });
+      return false;
+    }
+    return true;
+  }
 
   function withContentPath<T extends { id: string }>(attachment: T) {
     return {
@@ -434,7 +456,10 @@ export function issueRoutes(
     const currentExecutionWorkspace = issue.executionWorkspaceId
       ? await executionWorkspacesSvc.getById(issue.executionWorkspaceId)
       : null;
-    const workProducts = await workProductsSvc.listForIssue(issue.id);
+    const { enableWorkProducts } = await instanceSettings.getExperimental();
+    const workProducts = enableWorkProducts
+      ? await workProductsSvc.listForIssue(issue.id)
+      : [];
     res.json({
       ...issue,
       goalId: goal?.id ?? issue.goalId,
@@ -462,11 +487,13 @@ export function issueRoutes(
         ? req.query.wakeCommentId.trim()
         : null;
 
-    const [{ project, goal }, ancestors, commentCursor, wakeComment] = await Promise.all([
+    const { enableDependencies: depsEnabledForDetail } = await instanceSettings.getExperimental();
+    const [{ project, goal }, ancestors, commentCursor, wakeComment, blockers] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.getCommentCursor(issue.id),
       wakeCommentId ? svc.getComment(wakeCommentId) : null,
+      depsEnabledForDetail ? depsSvc.listBlockers(issue.id) : Promise.resolve([]),
     ]);
 
     res.json({
@@ -476,6 +503,7 @@ export function issueRoutes(
         title: issue.title,
         description: issue.description,
         status: issue.status,
+        blockedOn: issue.blockedOn,
         priority: issue.priority,
         projectId: issue.projectId,
         goalId: goal?.id ?? issue.goalId,
@@ -508,6 +536,13 @@ export function issueRoutes(
             parentId: goal.parentId,
           }
         : null,
+      blockers: blockers.map((b) => ({
+        id: b.id,
+        blockerIssueId: b.blockerIssueId,
+        blockerIdentifier: b.blockerIdentifier,
+        blockerTitle: b.blockerTitle,
+        blockerStatus: b.blockerStatus,
+      })),
       commentCursor,
       wakeComment:
         wakeComment && wakeComment.issueId === issue.id
@@ -516,7 +551,106 @@ export function issueRoutes(
     });
   });
 
+  // ── Issue dependency (blocker) routes ──────────────────────────────
+
+  router.get("/issues/:id/dependencies", async (req, res) => {
+    if (!(await assertDependenciesEnabled(res))) return;
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const blockers = await depsSvc.listBlockers(issue.id);
+    res.json(blockers);
+  });
+
+  router.post("/issues/:id/dependencies", validate(addIssueDependencySchema), async (req, res) => {
+    if (!(await assertDependenciesEnabled(res))) return;
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const actor = getActorInfo(req);
+    const dep = await depsSvc.addDependency(id, req.body.blockerIssueId, {
+      agentId: actor.agentId ?? undefined,
+      userId: actor.actorType === "user" ? actor.actorId : undefined,
+    });
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.dependency_added",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        identifier: issue.identifier,
+        blockerIssueId: req.body.blockerIssueId,
+      },
+    });
+
+    res.status(201).json(dep);
+  });
+
+  router.delete("/issues/:id/dependencies/:blockerIssueId", async (req, res) => {
+    if (!(await assertDependenciesEnabled(res))) return;
+    const id = req.params.id as string;
+    const blockerIssueId = req.params.blockerIssueId as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const actor = getActorInfo(req);
+    const deleted = await depsSvc.removeDependency(id, blockerIssueId);
+    if (!deleted) {
+      res.status(404).json({ error: "Dependency not found" });
+      return;
+    }
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.dependency_removed",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        identifier: issue.identifier,
+        blockerIssueId,
+      },
+    });
+
+    res.json({ ok: true });
+  });
+
+  router.get("/issues/:id/dependents", async (req, res) => {
+    if (!(await assertDependenciesEnabled(res))) return;
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const dependents = await depsSvc.listDependents(issue.id);
+    res.json(dependents);
+  });
+
+  // ── End dependency routes ─────────────────────────────────────────
+
   router.get("/issues/:id/work-products", async (req, res) => {
+    if (!(await assertWorkProductsEnabled(res))) return;
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -526,6 +660,143 @@ export function issueRoutes(
     assertCompanyAccess(req, issue.companyId);
     const workProducts = await workProductsSvc.listForIssue(issue.id);
     res.json(workProducts);
+  });
+
+  /**
+   * POST /issues/:id/work-products/reconcile
+   * Reconcile pull_request work-products for an issue by fetching
+   * current PR state from GitHub and updating status / reviewState.
+   */
+  router.post("/issues/:id/work-products/reconcile", async (req, res) => {
+    if (!(await assertWorkProductsEnabled(res))) return;
+    const id = req.params.id as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    const workProducts = await workProductsSvc.listForIssue(issue.id);
+    const prProducts = workProducts.filter((wp) => wp.type === "pull_request" && wp.url);
+
+    if (prProducts.length === 0) {
+      res.json({ reconciled: [], skipped: [], errors: [] });
+      return;
+    }
+
+    const reconciled: Array<{ id: string; title: string; status: string; reviewState: string }> = [];
+    const skipped: Array<{ id: string; title: string; reason: string }> = [];
+    const errors: Array<{ id: string; title: string; error: string }> = [];
+
+    // Track effective state per PR for label application after the loop
+    const prStates: Array<{ status: string; isUpstream: boolean }> = [];
+
+    const actor = getActorInfo(req);
+
+    for (const wp of prProducts) {
+      const parsed = parseGitHubPrUrl(wp.url!);
+      if (!parsed) {
+        skipped.push({ id: wp.id, title: wp.title, reason: "Could not parse GitHub PR URL" });
+        // Use cached metadata if available for label tracking
+        const cached = (wp.metadata as Record<string, unknown> | null)?.isUpstreamRepo;
+        prStates.push({ status: wp.status, isUpstream: cached === true });
+        continue;
+      }
+
+      try {
+        const state = await reconcilePrState(parsed);
+        if (!state) {
+          errors.push({ id: wp.id, title: wp.title, error: "GitHub API request failed" });
+          const cached = (wp.metadata as Record<string, unknown> | null)?.isUpstreamRepo;
+          prStates.push({ status: wp.status, isUpstream: cached === true });
+          continue;
+        }
+
+        // Track effective state for label application
+        prStates.push({ status: state.status, isUpstream: state.isUpstreamRepo });
+
+        // Cache isUpstreamRepo in metadata if not already stored
+        const existingMeta = (wp.metadata as Record<string, unknown> | null) ?? {};
+        const needsMetaUpdate = existingMeta.isUpstreamRepo !== state.isUpstreamRepo;
+
+        // Skip update if nothing changed (status, reviewState, and metadata)
+        if (wp.status === state.status && wp.reviewState === state.reviewState && !needsMetaUpdate) {
+          skipped.push({ id: wp.id, title: wp.title, reason: "Already up to date" });
+          continue;
+        }
+
+        const patch: Record<string, unknown> = {
+          status: state.status,
+          reviewState: state.reviewState,
+        };
+        if (needsMetaUpdate) {
+          patch.metadata = { ...existingMeta, isUpstreamRepo: state.isUpstreamRepo };
+        }
+
+        const updated = await workProductsSvc.update(wp.id, patch);
+
+        if (updated) {
+          const changedKeys = ["status", "reviewState"];
+          if (needsMetaUpdate) changedKeys.push("metadata");
+          await logActivity(db, {
+            companyId: issue.companyId,
+            actorType: actor.actorType,
+            actorId: actor.actorId,
+            agentId: actor.agentId,
+            runId: actor.runId,
+            action: "issue.work_product_updated",
+            entityType: "issue",
+            entityId: issue.id,
+            details: {
+              workProductId: wp.id,
+              changedKeys,
+              reconciledFrom: { status: wp.status, reviewState: wp.reviewState },
+              reconciledTo: { status: state.status, reviewState: state.reviewState },
+            },
+          });
+          reconciled.push({
+            id: wp.id,
+            title: wp.title,
+            status: state.status,
+            reviewState: state.reviewState,
+          });
+        }
+      } catch (err) {
+        errors.push({
+          id: wp.id,
+          title: wp.title,
+          error: err instanceof Error ? err.message : "Unknown error",
+        });
+      }
+    }
+
+    // ── Extension labels ───────────────────────────────────────────────
+    // Apply Merged / Upstream PR / Upstream Merged labels based on the
+    // reconciled PR states.  Labels are additive (never removed), following
+    // the same pattern as the existing "has-pr" auto-label.
+    try {
+      const hasMerged = prStates.some((s) => s.status === "merged");
+      const hasUpstream = prStates.some((s) => s.isUpstream);
+      const hasUpstreamMerged = prStates.some((s) => s.isUpstream && s.status === "merged");
+
+      if (hasMerged) {
+        const lid = await svc.ensureCompanyLabel(issue.companyId, "Merged", "#10B981");
+        await svc.addLabelToIssue(issue.id, issue.companyId, lid);
+      }
+      if (hasUpstream) {
+        const lid = await svc.ensureCompanyLabel(issue.companyId, "Upstream PR", "#F59E0B");
+        await svc.addLabelToIssue(issue.id, issue.companyId, lid);
+      }
+      if (hasUpstreamMerged) {
+        const lid = await svc.ensureCompanyLabel(issue.companyId, "Upstream Merged", "#059669");
+        await svc.addLabelToIssue(issue.id, issue.companyId, lid);
+      }
+    } catch (err) {
+      logger.warn({ err, issueId: issue.id }, "failed to apply extension PR labels");
+    }
+
+    res.json({ reconciled, skipped, errors });
   });
 
   router.get("/issues/:id/documents", async (req, res) => {
@@ -721,6 +992,7 @@ export function issueRoutes(
   });
 
   router.post("/issues/:id/work-products", validate(createIssueWorkProductSchema), async (req, res) => {
+    if (!(await assertWorkProductsEnabled(res))) return;
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -736,6 +1008,16 @@ export function issueRoutes(
       res.status(422).json({ error: "Invalid work product payload" });
       return;
     }
+    // Auto-label issues that have a pull_request work product
+    if (product.type === "pull_request") {
+      try {
+        const labelId = await svc.ensureCompanyLabel(issue.companyId, "has-pr", "#8B5CF6");
+        await svc.addLabelToIssue(issue.id, issue.companyId, labelId);
+      } catch (err) {
+        logger.warn({ err, issueId: issue.id }, "failed to auto-apply has-pr label");
+      }
+    }
+
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: issue.companyId,
@@ -752,6 +1034,7 @@ export function issueRoutes(
   });
 
   router.patch("/work-products/:id", validate(updateIssueWorkProductSchema), async (req, res) => {
+    if (!(await assertWorkProductsEnabled(res))) return;
     const id = req.params.id as string;
     const existing = await workProductsSvc.getById(id);
     if (!existing) {
@@ -780,6 +1063,7 @@ export function issueRoutes(
   });
 
   router.delete("/work-products/:id", async (req, res) => {
+    if (!(await assertWorkProductsEnabled(res))) return;
     const id = req.params.id as string;
     const existing = await workProductsSvc.getById(id);
     if (!existing) {
@@ -1238,6 +1522,9 @@ export function issueRoutes(
       existing.status === "backlog" &&
       issue.status !== "backlog" &&
       req.body.status !== undefined;
+    const blockerResolved =
+      existing.status !== issue.status &&
+      (issue.status === "done" || issue.status === "cancelled");
 
     // Merge all wakeups from this update into one enqueue per agent to avoid duplicate runs.
     void (async () => {
@@ -1281,6 +1568,39 @@ export function issueRoutes(
             ...(interruptedRunId ? { interruptedRunId } : {}),
           },
         });
+      }
+
+      // Wake dependents whose all blockers are now resolved (only when dependencies feature is enabled)
+      const { enableDependencies: depsEnabled } = await instanceSettings.getExperimental();
+      if (blockerResolved && depsEnabled) {
+        try {
+          const readyToWake = await depsSvc.findDependentsReadyToWake(issue.id);
+          for (const dependent of readyToWake) {
+            if (!dependent.assigneeAgentId) continue;
+            if (wakeups.has(dependent.assigneeAgentId)) continue;
+            wakeups.set(dependent.assigneeAgentId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: "dependency_resolved",
+              payload: {
+                issueId: dependent.id,
+                resolvedBlockerIssueId: issue.id,
+                mutation: "update",
+              },
+              requestedByActorType: actor.actorType,
+              requestedByActorId: actor.actorId,
+              contextSnapshot: {
+                issueId: dependent.id,
+                taskId: dependent.id,
+                resolvedBlockerIssueId: issue.id,
+                wakeReason: "dependency_resolved",
+                source: "issue.dependency_resolved",
+              },
+            });
+          }
+        } catch (err) {
+          logger.warn({ err, issueId: issue.id }, "failed to wake dependents on blocker resolve");
+        }
       }
 
       if (commentBody && comment) {

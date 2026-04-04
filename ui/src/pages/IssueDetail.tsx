@@ -3,9 +3,9 @@ import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { instanceSettingsApi } from "../api/instanceSettings";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
-import { instanceSettingsApi } from "../api/instanceSettings";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
@@ -37,6 +37,7 @@ import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread } from "../components/CommentThread";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
+import { IssueWorkProductsSection } from "../components/IssueWorkProductsSection";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
@@ -67,9 +68,12 @@ import {
   MessageSquare,
   MoreHorizontal,
   Paperclip,
+  Plus,
   Repeat,
+  Search,
   SlidersHorizontal,
   Trash2,
+  X,
 } from "lucide-react";
 import type { ActivityEvent } from "@paperclipai/shared";
 import type { Agent, FeedbackVote, Issue, IssueAttachment, IssueComment } from "@paperclipai/shared";
@@ -291,6 +295,7 @@ export function IssueDetail() {
   const [detailTab, setDetailTab] = useState("comments");
   const [secondaryOpen, setSecondaryOpen] = useState({
     approvals: false,
+    dependencies: false,
   });
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
@@ -313,6 +318,11 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
 
+  const { data: experimentalSettings } = useQuery({
+    queryKey: queryKeys.instance.experimentalSettings,
+    queryFn: () => instanceSettingsApi.getExperimental(),
+  });
+
   const { data: activity } = useQuery({
     queryKey: queryKeys.issues.activity(issueId!),
     queryFn: () => activityApi.forIssue(issueId!),
@@ -330,6 +340,12 @@ export function IssueDetail() {
     queryKey: queryKeys.issues.approvals(issueId!),
     queryFn: () => issuesApi.listApprovals(issueId!),
     enabled: !!issueId,
+  });
+
+  const { data: dependencies } = useQuery({
+    queryKey: queryKeys.issues.dependencies(issueId!),
+    queryFn: () => issuesApi.listDependencies(issueId!),
+    enabled: !!issueId && experimentalSettings?.enableDependencies === true,
   });
 
   const { data: attachments } = useQuery({
@@ -605,6 +621,7 @@ export function IssueDetail() {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.approvals(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.feedbackVotes(issueId!) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.dependencies(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
@@ -938,6 +955,46 @@ export function IssueDetail() {
       pushToast({
         title: "Archive failed",
         body: err instanceof Error ? err.message : "Unable to archive this issue from the inbox",
+        tone: "error",
+      });
+    },
+  });
+
+  // ── Dependency management ──
+  const [addBlockerOpen, setAddBlockerOpen] = useState(false);
+  const [blockerSearch, setBlockerSearch] = useState("");
+
+  const { data: blockerSearchResults } = useQuery({
+    queryKey: queryKeys.issues.search(resolvedCompanyId!, blockerSearch),
+    queryFn: () => issuesApi.list(resolvedCompanyId!, { q: blockerSearch }),
+    enabled: !!resolvedCompanyId && addBlockerOpen && blockerSearch.length > 0,
+  });
+
+  const addDependency = useMutation({
+    mutationFn: (blockerIssueId: string) => issuesApi.addDependency(issueId!, blockerIssueId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.dependencies(issueId!) });
+      setAddBlockerOpen(false);
+      setBlockerSearch("");
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Dependency failed",
+        body: err instanceof Error ? err.message : "Failed to add dependency",
+        tone: "error",
+      });
+    },
+  });
+
+  const removeDependency = useMutation({
+    mutationFn: (blockerIssueId: string) => issuesApi.removeDependency(issueId!, blockerIssueId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.dependencies(issueId!) });
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Remove failed",
+        body: err instanceof Error ? err.message : "Failed to remove dependency",
         tone: "error",
       });
     },
@@ -1475,6 +1532,10 @@ export function IssueDetail() {
         onUpdate={(data) => updateIssue.mutate(data)}
       />
 
+      {experimentalSettings?.enableWorkProducts === true && (
+        <IssueWorkProductsSection issueId={issue.id} />
+      )}
+
       <Separator />
 
       <Tabs value={detailTab} onValueChange={setDetailTab} className="space-y-3">
@@ -1637,6 +1698,110 @@ export function IssueDetail() {
           </TabsContent>
         )}
       </Tabs>
+
+      {/* Dependencies (blockers) — gated behind enableDependencies experimental flag */}
+      {experimentalSettings?.enableDependencies === true && dependencies && dependencies.length > 0 && (
+        <Collapsible
+          open={secondaryOpen.dependencies}
+          onOpenChange={(open) => setSecondaryOpen((prev) => ({ ...prev, dependencies: open }))}
+          className="rounded-lg border border-border"
+        >
+          <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-left">
+            <span className="text-sm font-medium text-muted-foreground">
+              Blocked By ({dependencies.length})
+            </span>
+            <ChevronDown
+              className={cn("h-4 w-4 text-muted-foreground transition-transform", secondaryOpen.dependencies && "rotate-180")}
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-border divide-y divide-border">
+              {dependencies.map((dep) => (
+                <div
+                  key={dep.id}
+                  className="flex items-center justify-between px-3 py-2 text-xs hover:bg-accent/20 transition-colors"
+                >
+                  <Link
+                    to={`/issues/${dep.blockerIdentifier ?? dep.blockerIssueId}`}
+                    className="flex items-center gap-2 min-w-0 flex-1"
+                  >
+                    <StatusBadge status={dep.blockerStatus} />
+                    <span className="font-mono text-muted-foreground shrink-0">
+                      {dep.blockerIdentifier ?? dep.blockerIssueId.slice(0, 8)}
+                    </span>
+                    <span className="truncate">{dep.blockerTitle}</span>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => removeDependency.mutate(dep.blockerIssueId)}
+                    className="ml-2 p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                    title="Remove dependency"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+
+              {/* Add blocker inline */}
+              <div className="px-3 py-2">
+                <Popover open={addBlockerOpen} onOpenChange={(open) => { setAddBlockerOpen(open); if (!open) setBlockerSearch(""); }}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add blocker
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72 p-2" align="start">
+                    <div className="flex items-center gap-2 px-2 pb-2 border-b border-border">
+                      <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      <input
+                        type="text"
+                        value={blockerSearch}
+                        onChange={(e) => setBlockerSearch(e.target.value)}
+                        placeholder="Search issues..."
+                        className="flex-1 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="max-h-48 overflow-y-auto pt-1">
+                      {blockerSearch.length === 0 && (
+                        <p className="px-2 py-3 text-xs text-muted-foreground text-center">
+                          Type to search for issues
+                        </p>
+                      )}
+                      {blockerSearch.length > 0 && blockerSearchResults && blockerSearchResults.length === 0 && (
+                        <p className="px-2 py-3 text-xs text-muted-foreground text-center">
+                          No matching issues
+                        </p>
+                      )}
+                      {(blockerSearchResults ?? [])
+                        .filter((i) => i.id !== issueId && !dependencies.some((d) => d.blockerIssueId === i.id))
+                        .slice(0, 10)
+                        .map((result) => (
+                          <button
+                            key={result.id}
+                            type="button"
+                            onClick={() => addDependency.mutate(result.id)}
+                            className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/40 transition-colors text-left"
+                          >
+                            <StatusBadge status={result.status} />
+                            <span className="font-mono text-muted-foreground shrink-0">
+                              {result.identifier ?? result.id.slice(0, 8)}
+                            </span>
+                            <span className="truncate">{result.title}</span>
+                          </button>
+                        ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {linkedApprovals && linkedApprovals.length > 0 && (
         <Collapsible

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
+import { BLOCKED_ON_KINDS, ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
 
 export const ISSUE_EXECUTION_WORKSPACE_PREFERENCES = [
   "inherit",
@@ -54,6 +54,7 @@ export const createIssueSchema = z.object({
   executionWorkspaceId: z.string().uuid().optional().nullable(),
   executionWorkspacePreference: z.enum(ISSUE_EXECUTION_WORKSPACE_PREFERENCES).optional().nullable(),
   executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),
+  blockedOn: z.enum(BLOCKED_ON_KINDS).optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
 });
 
@@ -90,6 +91,12 @@ export const addIssueCommentSchema = z.object({
 });
 
 export type AddIssueComment = z.infer<typeof addIssueCommentSchema>;
+
+export const addIssueDependencySchema = z.object({
+  blockerIssueId: z.string().uuid(),
+});
+
+export type AddIssueDependency = z.infer<typeof addIssueDependencySchema>;
 
 export const linkIssueApprovalSchema = z.object({
   approvalId: z.string().uuid(),

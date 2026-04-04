@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import pc from "picocolors";
 import type { Command } from "commander";
 import { getStoredBoardCredential, loginBoardCli } from "../../client/board-auth.js";
@@ -206,6 +207,36 @@ function inferApiBaseFromConfig(configPath?: string): string {
 function readKeyFromProfileEnv(profile: ClientContextProfile): string | undefined {
   if (!profile.apiKeyEnvVarName) return undefined;
   return process.env[profile.apiKeyEnvVarName]?.trim() || undefined;
+}
+
+/**
+ * Read text content from a file path. Used by `--body-file`, `--comment-file`,
+ * and `--description-file` options to bypass shell argument-parsing issues
+ * with multiline text.
+ */
+export function readBodyFromFile(filePath: string): string {
+  const content = fs.readFileSync(filePath, "utf8");
+  if (!content.trim()) {
+    throw new Error(`File is empty: ${filePath}`);
+  }
+  return content;
+}
+
+/**
+ * Resolve a text value from either an inline option or a file option.
+ * Throws if both are provided (mutually exclusive).
+ */
+export function resolveTextOption(
+  inline: string | undefined,
+  filePath: string | undefined,
+  inlineFlag: string,
+  fileFlag: string,
+): string | undefined {
+  if (inline && filePath) {
+    throw new Error(`${inlineFlag} and ${fileFlag} are mutually exclusive`);
+  }
+  if (filePath) return readBodyFromFile(filePath);
+  return inline;
 }
 
 export function handleCommandError(error: unknown): never {

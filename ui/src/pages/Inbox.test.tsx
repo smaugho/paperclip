@@ -30,6 +30,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     title: "Inbox item",
     description: null,
     status: "todo",
+    blockedOn: null,
     priority: "medium",
     assigneeAgentId: null,
     assigneeUserId: null,

@@ -39,10 +39,22 @@ vi.mock("../services/index.js", () => ({
     reportRunActivity: vi.fn(async () => undefined),
   }),
   instanceSettingsService: () => ({
-    getExperimental: vi.fn(async () => ({})),
+    getExperimental: vi.fn(async () => ({
+      enableIsolatedWorkspaces: false,
+      autoRestartDevServerWhenIdle: false,
+      enableWorkProducts: false,
+      enableDependencies: false,
+    })),
     getGeneral: vi.fn(async () => ({ feedbackDataSharingPreference: "prompt" })),
   }),
   issueApprovalService: () => ({}),
+  issueDependencyService: () => ({
+    addDependency: vi.fn(),
+    removeDependency: vi.fn(),
+    listBlockers: vi.fn().mockResolvedValue([]),
+    listDependents: vi.fn(),
+    findDependentsReadyToWake: vi.fn().mockResolvedValue([]),
+  }),
   issueService: () => mockIssueService,
   logActivity: mockLogActivity,
   projectService: () => ({}),

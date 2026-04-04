@@ -37,11 +37,15 @@ function normalizeExperimentalSettings(raw: unknown): InstanceExperimentalSettin
     return {
       enableIsolatedWorkspaces: parsed.data.enableIsolatedWorkspaces ?? false,
       autoRestartDevServerWhenIdle: parsed.data.autoRestartDevServerWhenIdle ?? false,
+      enableWorkProducts: parsed.data.enableWorkProducts ?? false,
+      enableDependencies: parsed.data.enableDependencies ?? false,
     };
   }
   return {
     enableIsolatedWorkspaces: false,
     autoRestartDevServerWhenIdle: false,
+    enableWorkProducts: false,
+    enableDependencies: false,
   };
 }
 

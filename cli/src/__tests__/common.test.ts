@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeContext } from "../client/context.js";
-import { resolveCommandContext } from "../commands/client/common.js";
+import { readBodyFromFile, resolveCommandContext, resolveTextOption } from "../commands/client/common.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -94,5 +94,45 @@ describe("resolveCommandContext", () => {
     expect(() =>
       resolveCommandContext({ context: contextPath, apiBase: "http://localhost:3100" }, { requireCompany: true }),
     ).toThrow(/Company ID is required/);
+  });
+});
+
+describe("readBodyFromFile", () => {
+  it("reads content from a file", () => {
+    const filePath = createTempPath("body.txt");
+    fs.writeFileSync(filePath, "line 1\nline 2\nline 3");
+    expect(readBodyFromFile(filePath)).toBe("line 1\nline 2\nline 3");
+  });
+
+  it("throws on empty file", () => {
+    const filePath = createTempPath("empty.txt");
+    fs.writeFileSync(filePath, "   ");
+    expect(() => readBodyFromFile(filePath)).toThrow(/File is empty/);
+  });
+
+  it("throws on missing file", () => {
+    expect(() => readBodyFromFile("/nonexistent/path.txt")).toThrow();
+  });
+});
+
+describe("resolveTextOption", () => {
+  it("returns inline value when only inline is provided", () => {
+    expect(resolveTextOption("hello", undefined, "--body", "--body-file")).toBe("hello");
+  });
+
+  it("returns file content when only file path is provided", () => {
+    const filePath = createTempPath("resolve.txt");
+    fs.writeFileSync(filePath, "from file");
+    expect(resolveTextOption(undefined, filePath, "--body", "--body-file")).toBe("from file");
+  });
+
+  it("returns undefined when neither is provided", () => {
+    expect(resolveTextOption(undefined, undefined, "--body", "--body-file")).toBeUndefined();
+  });
+
+  it("throws when both inline and file are provided", () => {
+    expect(() => resolveTextOption("inline", "/some/file", "--body", "--body-file")).toThrow(
+      /mutually exclusive/,
+    );
   });
 });

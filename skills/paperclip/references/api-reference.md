@@ -594,6 +594,8 @@ Terminal states: `done`, `cancelled`
 | Method | Path                               | Description                          |
 | ------ | ---------------------------------- | ------------------------------------ |
 | GET    | `/api/agents/me`                   | Your agent record + chain of command |
+| GET    | `/api/agents/me/inbox-lite`        | Your compact inbox (todo/in_progress/blocked issues) |
+| GET    | `/api/agents/:agentId/inbox-lite`  | Agent's compact inbox. Access: self, board users, or ancestor managers only (chain-of-command enforced) |
 | GET    | `/api/agents/me/inbox/mine?userId=:userId` | Mine-tab issue list for a specific board user |
 | GET    | `/api/agents/:agentId`             | Agent details + chain of command     |
 | GET    | `/api/companies/:companyId/agents` | List all agents in company           |
@@ -629,6 +631,10 @@ Terminal states: `done`, `cancelled`
 | PUT    | `/api/issues/:issueId/documents/:key` | Create or update issue document (send `baseRevisionId` when updating)                |
 | GET    | `/api/issues/:issueId/documents/:key/revisions` | Document revision history                                                  |
 | DELETE | `/api/issues/:issueId/documents/:key` | Delete document (board-only)                                                         |
+| GET    | `/api/issues/:issueId/dependencies` | List blocker dependencies (requires `enableDependencies` flag)                           |
+| POST   | `/api/issues/:issueId/dependencies` | Add a blocker dependency (requires `enableDependencies` flag)                            |
+| DELETE | `/api/issues/:issueId/dependencies/:dependencyId` | Remove a blocker dependency (requires `enableDependencies` flag)              |
+| GET    | `/api/issues/:issueId/dependents`  | List issues blocked by this issue (requires `enableDependencies` flag)                    |
 | GET    | `/api/issues/:issueId/approvals`   | List approvals linked to issue                                                           |
 | POST   | `/api/issues/:issueId/approvals`   | Link approval to issue                                                                   |
 | DELETE | `/api/issues/:issueId/approvals/:approvalId` | Unlink approval from issue                                                     |

@@ -36,6 +36,8 @@ import { getDefaultCompanyGoal } from "./goals.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
+const NEED_BOARD_LABEL_NAME = "Need Board";
+const NEED_BOARD_LABEL_COLOR = "#EF4444";
 
 function assertTransition(from: string, to: string) {
   if (from === to) return;
@@ -675,6 +677,122 @@ export function issueService(db: Db) {
     );
   }
 
+  /**
+   * Idempotently attach the "Board Comments" label to an issue when a
+   * board/user-authored comment is added.
+   *
+   * Rules:
+   * - If the issue already carries a "From Board" label → skip (that label is
+   *   stronger and implies the whole issue was board-created).
+   * - If the "Board Comments" label is already on the issue → no-op.
+   * - Otherwise, find-or-create the "Board Comments" label for the company and
+   *   attach it.
+   */
+  async function ensureBoardCommentLabel(issueId: string, companyId: string): Promise<void> {
+    // Fetch current labels for the issue
+    const currentLabels = await db
+      .select({ labelId: issueLabels.labelId, labelName: labels.name })
+      .from(issueLabels)
+      .innerJoin(labels, eq(issueLabels.labelId, labels.id))
+      .where(eq(issueLabels.issueId, issueId));
+
+    // If issue already has "From Board", skip
+    if (currentLabels.some((l) => l.labelName === "From Board")) return;
+
+    // If issue already has "Board Comments", skip
+    if (currentLabels.some((l) => l.labelName === "Board Comments")) return;
+
+    // Find or create the "Board Comments" label for this company
+    let label = await db
+      .select({ id: labels.id })
+      .from(labels)
+      .where(and(eq(labels.companyId, companyId), eq(labels.name, "Board Comments")))
+      .then((rows) => rows[0] ?? null);
+
+    if (!label) {
+      const [created] = await db
+        .insert(labels)
+        .values({ companyId, name: "Board Comments", color: "#6366f1" })
+        .onConflictDoNothing()
+        .returning();
+      if (created) {
+        label = created;
+      } else {
+        // Race: another writer created it between our SELECT and INSERT
+        label = await db
+          .select({ id: labels.id })
+          .from(labels)
+          .where(and(eq(labels.companyId, companyId), eq(labels.name, "Board Comments")))
+          .then((rows) => rows[0] ?? null);
+      }
+    }
+
+    if (!label) return; // Defensive — should not happen
+
+    // Attach the label idempotently
+    await db
+      .insert(issueLabels)
+      .values({ issueId, labelId: label.id, companyId })
+      .onConflictDoNothing();
+  }
+
+  async function getOrCreateNeedBoardLabel(companyId: string, dbOrTx: any = db) {
+    const [existing] = await dbOrTx
+      .select()
+      .from(labels)
+      .where(and(eq(labels.companyId, companyId), eq(labels.name, NEED_BOARD_LABEL_NAME)));
+    if (existing) return existing;
+    const [created] = await dbOrTx
+      .insert(labels)
+      .values({ companyId, name: NEED_BOARD_LABEL_NAME, color: NEED_BOARD_LABEL_COLOR })
+      .onConflictDoNothing()
+      .returning();
+    if (created) return created;
+    const [fallback] = await dbOrTx
+      .select()
+      .from(labels)
+      .where(and(eq(labels.companyId, companyId), eq(labels.name, NEED_BOARD_LABEL_NAME)));
+    return fallback;
+  }
+
+  async function ensureNeedBoardLabel(issueId: string, companyId: string, dbOrTx: any = db) {
+    const label = await getOrCreateNeedBoardLabel(companyId, dbOrTx);
+    if (!label) return;
+    const [existing] = await dbOrTx
+      .select()
+      .from(issueLabels)
+      .where(and(eq(issueLabels.issueId, issueId), eq(issueLabels.labelId, label.id)));
+    if (existing) return;
+    await dbOrTx
+      .insert(issueLabels)
+      .values({ issueId, labelId: label.id, companyId })
+      .onConflictDoNothing();
+  }
+
+  async function removeNeedBoardLabel(issueId: string, companyId: string, dbOrTx: any = db) {
+    const [label] = await dbOrTx
+      .select({ id: labels.id })
+      .from(labels)
+      .where(and(eq(labels.companyId, companyId), eq(labels.name, NEED_BOARD_LABEL_NAME)));
+    if (!label) return;
+    await dbOrTx
+      .delete(issueLabels)
+      .where(and(eq(issueLabels.issueId, issueId), eq(issueLabels.labelId, label.id)));
+  }
+
+  async function syncNeedBoardLabel(
+    issueId: string,
+    companyId: string,
+    isBoardBlocked: boolean,
+    dbOrTx: any = db,
+  ) {
+    if (isBoardBlocked) {
+      await ensureNeedBoardLabel(issueId, companyId, dbOrTx);
+    } else {
+      await removeNeedBoardLabel(issueId, companyId, dbOrTx);
+    }
+  }
+
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
     const run = await db
       .select({ status: heartbeatRuns.status })
@@ -1220,8 +1338,32 @@ export function issueService(db: Db) {
         }
 
         const [issue] = await tx.insert(issues).values(values).returning();
-        if (inputLabelIds) {
-          await syncIssueLabels(issue.id, companyId, inputLabelIds, tx);
+
+        // Auto-apply "From Board" label for board-authored issues
+        let finalLabelIds = inputLabelIds ? [...inputLabelIds] : [];
+        if (issueData.createdByUserId) {
+          const fromBoardLabelName = "From Board";
+          let fromBoardLabel = await tx
+            .select({ id: labels.id })
+            .from(labels)
+            .where(and(eq(labels.companyId, companyId), eq(labels.name, fromBoardLabelName)))
+            .then((rows) => rows[0] ?? null);
+          if (!fromBoardLabel) {
+            [fromBoardLabel] = await tx
+              .insert(labels)
+              .values({ companyId, name: fromBoardLabelName, color: "#0ea5e9" })
+              .returning({ id: labels.id });
+          }
+          if (!finalLabelIds.includes(fromBoardLabel.id)) {
+            finalLabelIds.push(fromBoardLabel.id);
+          }
+        }
+        if (finalLabelIds.length > 0) {
+          await syncIssueLabels(issue.id, companyId, finalLabelIds, tx);
+        }
+        // Auto-manage "Need Board" label on creation
+        if (issue.status === "blocked" && issue.blockedOn === "board") {
+          await ensureNeedBoardLabel(issue.id, companyId, tx);
         }
         const [enriched] = await withIssueLabels(tx, [issue]);
         return enriched;
@@ -1299,6 +1441,12 @@ export function issueService(db: Db) {
         patch.checkoutRunId = null;
       }
 
+      // Clear blockedOn when status transitions away from "blocked"
+      const nextStatus = issueData.status ?? existing.status;
+      if (nextStatus !== "blocked" && existing.blockedOn) {
+        patch.blockedOn = null;
+      }
+
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, existing.companyId);
         const [currentProjectGoalId, nextProjectGoalId] = await Promise.all([
@@ -1328,6 +1476,9 @@ export function issueService(db: Db) {
         if (nextLabelIds !== undefined) {
           await syncIssueLabels(updated.id, existing.companyId, nextLabelIds, tx);
         }
+        // Auto-manage "Need Board" label based on blocked_on state
+        const finalBlockedOn = updated.blockedOn;
+        await syncNeedBoardLabel(updated.id, existing.companyId, finalBlockedOn === "board", tx);
         const [enriched] = await withIssueLabels(tx, [updated]);
         return enriched;
       });
@@ -1394,6 +1545,7 @@ export function issueService(db: Db) {
           checkoutRunId,
           executionRunId: checkoutRunId,
           status: "in_progress",
+          blockedOn: null,
           startedAt: now,
           updatedAt: now,
         })
@@ -1409,6 +1561,7 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
 
       if (updated) {
+        await removeNeedBoardLabel(updated.id, issueCompany.companyId);
         const [enriched] = await withIssueLabels(db, [updated]);
         return enriched;
       }
@@ -1620,6 +1773,30 @@ export function issueService(db: Db) {
         .returning()
         .then((rows) => rows[0] ?? null),
 
+    ensureCompanyLabel: async (companyId: string, name: string, color: string): Promise<string> => {
+      const existing = await db
+        .select({ id: labels.id })
+        .from(labels)
+        .where(and(eq(labels.companyId, companyId), eq(labels.name, name)))
+        .then((rows) => rows[0] ?? null);
+      if (existing) return existing.id;
+      const [created] = await db
+        .insert(labels)
+        .values({ companyId, name: name.trim(), color })
+        .returning();
+      return created.id;
+    },
+
+    addLabelToIssue: async (issueId: string, companyId: string, labelId: string): Promise<void> => {
+      const exists = await db
+        .select({ issueId: issueLabels.issueId })
+        .from(issueLabels)
+        .where(and(eq(issueLabels.issueId, issueId), eq(issueLabels.labelId, labelId)))
+        .then((rows) => rows[0] ?? null);
+      if (exists) return;
+      await db.insert(issueLabels).values({ issueId, labelId, companyId });
+    },
+
     listComments: async (
       issueId: string,
       opts?: {
@@ -1747,6 +1924,12 @@ export function issueService(db: Db) {
         .update(issues)
         .set({ updatedAt: new Date() })
         .where(eq(issues.id, issueId));
+
+      // Auto-label "Board Comments" when a board/user authors a comment
+      const isBoardComment = Boolean(actor.userId) && !actor.agentId;
+      if (isBoardComment) {
+        await ensureBoardCommentLabel(issueId, issue.companyId);
+      }
 
       return redactIssueComment(comment, currentUserRedactionOptions.enabled);
     },

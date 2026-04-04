@@ -41,6 +41,8 @@ describe("instance settings routes", () => {
     mockInstanceSettingsService.getExperimental.mockResolvedValue({
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
+      enableWorkProducts: false,
+      enableDependencies: false,
     });
     mockInstanceSettingsService.updateGeneral.mockResolvedValue({
       id: "instance-settings-1",
@@ -55,6 +57,8 @@ describe("instance settings routes", () => {
       experimental: {
         enableIsolatedWorkspaces: true,
         autoRestartDevServerWhenIdle: false,
+        enableWorkProducts: false,
+        enableDependencies: false,
       },
     });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1", "company-2"]);
@@ -73,6 +77,8 @@ describe("instance settings routes", () => {
     expect(getRes.body).toEqual({
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
+      enableWorkProducts: false,
+      enableDependencies: false,
     });
 
     const patchRes = await request(app)

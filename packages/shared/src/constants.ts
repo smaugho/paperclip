@@ -120,6 +120,17 @@ export const ISSUE_STATUSES = [
 ] as const;
 export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 
+export const BLOCKED_ON_KINDS = ["board", "agent", "external"] as const;
+export type BlockedOnKind = (typeof BLOCKED_ON_KINDS)[number];
+
+export const INBOX_LITE_ISSUE_STATUSES = [
+  "todo",
+  "in_progress",
+  "blocked",
+  "in_review",
+] as const;
+export const INBOX_LITE_ISSUE_STATUS_FILTER = INBOX_LITE_ISSUE_STATUSES.join(",");
+
 export const INBOX_MINE_ISSUE_STATUSES = [
   "backlog",
   "todo",
