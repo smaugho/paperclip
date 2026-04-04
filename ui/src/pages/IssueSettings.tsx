@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@/lib/router";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -413,13 +413,21 @@ function DryRunDialog({
 }) {
   const { pushToast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedIssueId, setSelectedIssueId] = useState("");
   const [result, setResult] = useState<DryRunResult | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Debounce search input by 300ms
+  useEffect(() => {
+    debounceRef.current = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchQuery]);
 
   const { data: issues } = useQuery({
-    queryKey: queryKeys.issues.search(companyId, searchQuery),
-    queryFn: () => issuesApi.list(companyId, { q: searchQuery || undefined }),
-    enabled: open && !!companyId,
+    queryKey: queryKeys.issues.search(companyId, debouncedQuery),
+    queryFn: () => issuesApi.list(companyId, { q: debouncedQuery }),
+    enabled: open && !!companyId && debouncedQuery.length >= 2,
   });
 
   const dryRunMutation = useMutation({
@@ -437,6 +445,7 @@ function DryRunDialog({
   useEffect(() => {
     if (open) {
       setSearchQuery("");
+      setDebouncedQuery("");
       setSelectedIssueId("");
       setResult(null);
     }
@@ -455,7 +464,7 @@ function DryRunDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <Field label="Search for an issue" hint="Find an issue to test against.">
+          <Field label="Search for an issue" hint="Type at least 2 characters to search.">
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
               value={searchQuery}
@@ -546,6 +555,30 @@ function AuditLogDialog({
     enabled: open && !!rule,
   });
 
+  // Resolve issue identifiers from execution issueIds
+  const uniqueIssueIds = useMemo(() => {
+    if (!executions) return [];
+    return [...new Set(executions.map((e: AutoLabelRuleExecution) => e.issueId))];
+  }, [executions]);
+
+  const issueQueries = useQueries({
+    queries: uniqueIssueIds.map((id) => ({
+      queryKey: queryKeys.issues.detail(id),
+      queryFn: () => issuesApi.get(id),
+      staleTime: 5 * 60 * 1000, // cache for 5 min
+    })),
+  });
+
+  const issueMap = useMemo(() => {
+    const map = new Map<string, { identifier: string; title: string }>();
+    issueQueries.forEach((q, i) => {
+      if (q.data) {
+        map.set(uniqueIssueIds[i], { identifier: q.data.identifier ?? uniqueIssueIds[i].slice(0, 8), title: q.data.title });
+      }
+    });
+    return map;
+  }, [issueQueries, uniqueIssueIds]);
+
   if (!rule) return null;
 
   return (
@@ -585,7 +618,15 @@ function AuditLogDialog({
                   </div>
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-muted-foreground">Issue:</span>
-                    <span className="font-mono">{exec.issueId.slice(0, 8)}</span>
+                    {issueMap.has(exec.issueId) ? (
+                      <span>
+                        <span className="font-mono">{issueMap.get(exec.issueId)!.identifier}</span>
+                        {" "}
+                        <span className="text-muted-foreground truncate">{issueMap.get(exec.issueId)!.title}</span>
+                      </span>
+                    ) : (
+                      <span className="font-mono">{exec.issueId.slice(0, 8)}…</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-muted-foreground">Trigger:</span>
@@ -732,6 +773,9 @@ function AutoLabelRulesSection({
                     <td className="px-3 py-2 text-center">
                       <button
                         type="button"
+                        role="switch"
+                        aria-checked={rule.enabled}
+                        aria-label={`Toggle ${rule.name}`}
                         className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
                           rule.enabled ? "bg-green-600" : "bg-muted"
                         }`}
