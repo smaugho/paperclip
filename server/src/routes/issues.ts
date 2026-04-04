@@ -99,15 +99,6 @@ export function issueRoutes(
     return true;
   }
 
-  async function assertWorkProductsEnabled(res: Response): Promise<boolean> {
-    const { enableWorkProducts } = await instanceSettings.getExperimental();
-    if (!enableWorkProducts) {
-      res.status(403).json({ error: "Work products feature is not enabled. Enable the 'enableWorkProducts' experimental flag in instance settings." });
-      return false;
-    }
-    return true;
-  }
-
   function withContentPath<T extends { id: string }>(attachment: T) {
     return {
       ...attachment,
@@ -457,10 +448,7 @@ export function issueRoutes(
     const currentExecutionWorkspace = issue.executionWorkspaceId
       ? await executionWorkspacesSvc.getById(issue.executionWorkspaceId)
       : null;
-    const { enableWorkProducts } = await instanceSettings.getExperimental();
-    const workProducts = enableWorkProducts
-      ? await workProductsSvc.listForIssue(issue.id)
-      : [];
+    const workProducts = await workProductsSvc.listForIssue(issue.id);
     res.json({
       ...issue,
       goalId: goal?.id ?? issue.goalId,
@@ -651,7 +639,7 @@ export function issueRoutes(
   // ── End dependency routes ─────────────────────────────────────────
 
   router.get("/issues/:id/work-products", async (req, res) => {
-    if (!(await assertWorkProductsEnabled(res))) return;
+
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -669,7 +657,7 @@ export function issueRoutes(
    * current PR state from GitHub and updating status / reviewState.
    */
   router.post("/issues/:id/work-products/reconcile", async (req, res) => {
-    if (!(await assertWorkProductsEnabled(res))) return;
+
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -993,7 +981,7 @@ export function issueRoutes(
   });
 
   router.post("/issues/:id/work-products", validate(createIssueWorkProductSchema), async (req, res) => {
-    if (!(await assertWorkProductsEnabled(res))) return;
+
     const id = req.params.id as string;
     const issue = await svc.getById(id);
     if (!issue) {
@@ -1035,7 +1023,7 @@ export function issueRoutes(
   });
 
   router.patch("/work-products/:id", validate(updateIssueWorkProductSchema), async (req, res) => {
-    if (!(await assertWorkProductsEnabled(res))) return;
+
     const id = req.params.id as string;
     const existing = await workProductsSvc.getById(id);
     if (!existing) {
@@ -1064,7 +1052,7 @@ export function issueRoutes(
   });
 
   router.delete("/work-products/:id", async (req, res) => {
-    if (!(await assertWorkProductsEnabled(res))) return;
+
     const id = req.params.id as string;
     const existing = await workProductsSvc.getById(id);
     if (!existing) {
