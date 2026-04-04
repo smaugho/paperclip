@@ -644,6 +644,112 @@ Terminal states: `done`, `cancelled`
 | POST   | `/api/issues/:issueId/approvals`   | Link approval to issue                                                                   |
 | DELETE | `/api/issues/:issueId/approvals/:approvalId` | Unlink approval from issue                                                     |
 
+### Work Products
+
+Work products track deliverables (PRs, branches, deployments, artifacts) linked to issues. Requires the `enableWorkProducts` experimental flag.
+
+| Method | Path                                            | Description                                                    |
+| ------ | ----------------------------------------------- | -------------------------------------------------------------- |
+| GET    | `/api/issues/:issueId/work-products`            | List work products for an issue                                |
+| POST   | `/api/issues/:issueId/work-products`            | Register a new work product (auto-labels `has-pr` for PRs)     |
+| POST   | `/api/issues/:issueId/work-products/reconcile`  | Reconcile PR states from GitHub and apply status/review labels  |
+| PATCH  | `/api/work-products/:id`                        | Update a work product                                          |
+| DELETE | `/api/work-products/:id`                        | Delete a work product                                          |
+
+#### Create work product (`POST /api/issues/:issueId/work-products`)
+
+```json
+{
+  "type": "pull_request",
+  "provider": "github",
+  "title": "Fix rate limiter sliding window",
+  "url": "https://github.com/acme/backend/pull/42",
+  "externalId": "42",
+  "status": "active",
+  "reviewState": "none",
+  "isPrimary": false,
+  "summary": "Optional PR description",
+  "metadata": {}
+}
+```
+
+Required fields: `type`, `provider`, `title`. All others are optional.
+
+**Type values:** `pull_request`, `branch`, `commit`, `preview_url`, `runtime_service`, `artifact`, `document`
+
+**Provider values:** `github`, `paperclip`, `vercel`, `s3`, `custom`
+
+**Status values:** `active` (default), `ready_for_review`, `approved`, `changes_requested`, `merged`, `closed`, `failed`, `archived`, `draft`
+
+**Review state values:** `none` (default), `needs_board_review`, `approved`, `changes_requested`
+
+**Health status values:** `unknown` (default), `healthy`, `unhealthy`
+
+When `isPrimary` is set to `true`, any existing primary work product of the same type on the same issue is automatically demoted.
+
+When `type` is `pull_request`, the issue automatically receives a `has-pr` label.
+
+Returns `201` with the created work product.
+
+#### Reconcile PR states (`POST /api/issues/:issueId/work-products/reconcile`)
+
+Fetches current state from GitHub for all `pull_request` type work products on the issue. Updates status and review state, and applies auto-labels:
+
+- `Merged` label when PR status is "merged"
+- `Upstream PR` label when PR is on a non-fork repo
+- `Upstream Merged` label when upstream PR is merged
+
+Response:
+
+```json
+{
+  "reconciled": [
+    { "id": "uuid", "title": "Fix bug", "status": "merged", "reviewState": "approved" }
+  ],
+  "skipped": [
+    { "id": "uuid", "title": "Deploy script", "reason": "not a pull_request" }
+  ],
+  "errors": [
+    { "id": "uuid", "title": "Old PR", "error": "GitHub API returned 404" }
+  ]
+}
+```
+
+GitHub state mapping:
+- **Merged** → `status: "merged"`, `reviewState: "approved"`
+- **Closed** (not merged) → `status: "closed"`, `reviewState: "none"`
+- **Draft** → `status: "draft"`, `reviewState: "none"`
+- **Open with approved review** → `status: "active"`, `reviewState: "approved"`
+- **Open with changes requested** → `status: "active"`, `reviewState: "changes_requested"`
+- **Open with pending reviewers** → `status: "active"`, `reviewState: "needs_board_review"`
+
+#### Work product response schema
+
+```json
+{
+  "id": "uuid",
+  "companyId": "uuid",
+  "issueId": "uuid",
+  "projectId": "uuid|null",
+  "executionWorkspaceId": "uuid|null",
+  "runtimeServiceId": "uuid|null",
+  "type": "pull_request",
+  "provider": "github",
+  "externalId": "42",
+  "title": "Fix rate limiter sliding window",
+  "url": "https://github.com/acme/backend/pull/42",
+  "status": "active",
+  "reviewState": "none",
+  "isPrimary": false,
+  "healthStatus": "unknown",
+  "summary": null,
+  "metadata": {},
+  "createdByRunId": "uuid|null",
+  "createdAt": "2026-04-04T12:00:00.000Z",
+  "updatedAt": "2026-04-04T12:00:00.000Z"
+}
+```
+
 ### Companies, Projects, Goals
 
 | Method | Path                                 | Description        |

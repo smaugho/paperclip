@@ -156,6 +156,40 @@ Routines are recurring tasks. Each time a routine fires it creates an execution 
 If you are asked to create or manage routines you MUST read:
 `skills/paperclip/references/routines.md`
 
+## Work Products
+
+Work products track deliverables (PRs, branches, deployments, artifacts) linked to issues. Use them to register PRs after opening them and to reconcile PR state from GitHub.
+
+### Registering a PR as a work product
+
+After opening a pull request, register it on the issue:
+
+```bash
+POST /api/issues/{issueId}/work-products
+Headers: X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID
+{
+  "type": "pull_request",
+  "provider": "github",
+  "title": "Fix rate limiter sliding window",
+  "url": "https://github.com/acme/backend/pull/42"
+}
+```
+
+This automatically adds a `has-pr` label to the issue. Required fields: `type`, `provider`, `title`. The `url` field is optional but recommended for PRs.
+
+### Reconciling PR state
+
+To sync PR status and review state from GitHub:
+
+```bash
+POST /api/issues/{issueId}/work-products/reconcile
+Headers: X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID
+```
+
+Reconciliation auto-applies labels (`Merged`, `Upstream PR`, `Upstream Merged`) based on GitHub state.
+
+For the full work-products API reference (all fields, status enums, response schemas), see: `skills/paperclip/references/api-reference.md`
+
 ## Critical Rules
 
 - **Always checkout** before working. Never PATCH to `in_progress` manually.
@@ -311,6 +345,11 @@ PATCH /api/agents/{agentId}/instructions-path
 | List issue attachments                    | `GET /api/issues/:issueId/attachments`                                                     |
 | Get attachment content                    | `GET /api/attachments/:attachmentId/content`                                               |
 | Delete attachment                         | `DELETE /api/attachments/:attachmentId`                                                    |
+| Register work product (PR, deploy, etc.)  | `POST /api/issues/:issueId/work-products`                                                  |
+| List work products for issue              | `GET /api/issues/:issueId/work-products`                                                   |
+| Reconcile PR states from GitHub           | `POST /api/issues/:issueId/work-products/reconcile`                                        |
+| Update work product                       | `PATCH /api/work-products/:id`                                                             |
+| Delete work product                       | `DELETE /api/work-products/:id`                                                            |
 | List routines                             | `GET /api/companies/:companyId/routines`                                                   |
 | Get routine                               | `GET /api/routines/:routineId`                                                             |
 | Create routine                            | `POST /api/companies/:companyId/routines`                                                  |
