@@ -414,6 +414,85 @@ describe("IssueDocumentsSection", () => {
     queryClient.clear();
   });
 
+  it("returns from a historical preview when fetched history is newer than the document summary", async () => {
+    const staleDocument = createIssueDocument({
+      body: "Original plan body",
+      latestRevisionId: "revision-2",
+      latestRevisionNumber: 2,
+      updatedAt: new Date("2026-03-31T12:00:00.000Z"),
+    });
+    const issue = createIssue();
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+        mutations: {
+          retry: false,
+        },
+      },
+    });
+
+    mockIssuesApi.listDocuments.mockResolvedValue([staleDocument]);
+    queryClient.setQueryData(
+      queryKeys.issues.documentRevisions(issue.id, "plan"),
+      [
+        createRevision({
+          id: "revision-3",
+          revisionNumber: 3,
+          body: "Current plan body",
+          createdAt: new Date("2026-03-31T12:05:00.000Z"),
+        }),
+        createRevision({
+          id: "revision-2",
+          revisionNumber: 2,
+          body: "Original plan body",
+          createdAt: new Date("2026-03-31T12:00:00.000Z"),
+        }),
+      ],
+    );
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <IssueDocumentsSection issue={issue} canDeleteDocuments={false} />
+        </QueryClientProvider>,
+      );
+    });
+    await flush();
+    await flush();
+
+    expect(container.textContent).toContain("Current plan body");
+
+    const revisionButtons = Array.from(container.querySelectorAll("button"));
+    const historicalRevisionButton = revisionButtons.find((button) => button.textContent?.includes("rev 2"));
+    expect(historicalRevisionButton).toBeTruthy();
+
+    await act(async () => {
+      historicalRevisionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("Viewing revision 2");
+    expect(container.textContent).toContain("Original plan body");
+
+    const currentRevisionButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("rev 3"));
+    expect(currentRevisionButton).toBeTruthy();
+
+    await act(async () => {
+      currentRevisionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).not.toContain("Viewing revision 2");
+    expect(container.textContent).toContain("Current plan body");
+
+    await act(async () => {
+      root.unmount();
+    });
+    queryClient.clear();
+  });
+
   it("ignores mount-time editor change noise before a document is actively being edited", async () => {
     markdownEditorMockState.emitMountEmptyChange = true;
 

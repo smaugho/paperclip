@@ -537,13 +537,13 @@ export function IssueDocumentsSection({
   }, []);
 
   const previewRevision = useCallback((doc: IssueDocument, revisionId: string) => {
-    if (revisionId === doc.latestRevisionId) {
+    const revisionState = deriveDocumentRevisionState(doc, getDocumentRevisions(doc.key));
+    const selectedRevision = revisionState.revisions.find((revision) => revision.id === revisionId);
+    if (!selectedRevision) return;
+    if (selectedRevision.id === revisionState.currentRevision.id) {
       returnToLatestRevision(doc.key);
       return;
     }
-    const revisions = getDocumentRevisions(doc.key);
-    const selectedRevision = revisions.find((revision) => revision.id === revisionId);
-    if (!selectedRevision) return;
     if (documentConflict?.key === doc.key || documentHasUnsavedChanges(doc, draft)) {
       setError("Save or cancel your local changes before viewing an older revision.");
       return;
@@ -788,7 +788,8 @@ export function IssueDocumentsSection({
           const activeDraft = draft?.key === doc.key && !draft.isNew ? draft : null;
           const activeConflict = documentConflict?.key === doc.key ? documentConflict : null;
           const isFolded = foldedDocumentKeys.includes(doc.key);
-          const revisionState = deriveDocumentRevisionState(doc, getDocumentRevisions(doc.key));
+          const rawRevisionHistory = getDocumentRevisions(doc.key);
+          const revisionState = deriveDocumentRevisionState(doc, rawRevisionHistory);
           const revisionHistory = revisionState.revisions;
           const currentRevision = revisionState.currentRevision;
           const selectedRevisionId = selectedRevisionIds[doc.key] ?? null;
@@ -848,7 +849,7 @@ export function IssueDocumentsSection({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-72">
                         <DropdownMenuLabel>Revision history</DropdownMenuLabel>
-                        {revisionMenuOpenKey === doc.key && isFetchingDocumentRevisions && revisionHistory.length === 0 ? (
+                        {revisionMenuOpenKey === doc.key && isFetchingDocumentRevisions && rawRevisionHistory.length === 0 ? (
                           <DropdownMenuItem disabled>Loading revisions...</DropdownMenuItem>
                         ) : revisionHistory.length > 0 ? (
                           <DropdownMenuRadioGroup value={selectedRevisionId ?? currentRevision.id ?? ""}>
